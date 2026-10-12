@@ -17,8 +17,8 @@ class ResUsers(models.Model):
         copy=False,
         help="Puede asignar varios almacenes de las compañías permitidas del "
              "usuario. Sin almacenes solo podrá ver productos contables si "
-             "pertenece al grupo Producto contable. Los administradores "
-             "de Ajustes están exentos de la restricción por almacén.",
+             "pertenece al grupo Producto contable. Solo la cuenta principal "
+             "de administrador ve todos los productos de las compañías seleccionadas.",
     )
 
     @api.constrains("domex_warehouse_ids", "company_ids")
@@ -44,6 +44,12 @@ class ResUsers(models.Model):
             Domain("company_id", "=", False)
             | Domain("company_id", "in", company_ids)
         )
+        # Exempt the principal administrator account, not every user assigned
+        # the Settings administrator role. XML identity survives login/name edits.
+        administrator = self.env.ref("base.user_admin", raise_if_not_found=False)
+        if administrator and self.id == administrator.id:
+            return company_domain
+
         warehouse_domain = (
             Domain("id", "in", self.domex_warehouse_ids.ids)
             & Domain("company_id", "in", company_ids)
@@ -57,12 +63,10 @@ class ResUsers(models.Model):
         warehouse_access = Domain(
             "domex_warehouse_ids", "any!", warehouse_domain,
         )
-        if not self.has_group("base.group_system"):
-            regular_domain &= warehouse_access
+        regular_domain &= warehouse_access
 
         accounting_domain = Domain.FALSE
         if self.has_group("domex_product_warehouse_access.group_accounting_product"):
             accounting_domain = Domain("domex_accounting_product", "=", True)
 
-        # Even administrators need the accounting group for marked products.
         return company_domain & (regular_domain | accounting_domain)

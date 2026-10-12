@@ -25,8 +25,9 @@
                         todos sus almacenes deben pertenecer a ella.
                     </p>
                     <p class="text-muted" invisible="not domex_accounting_product">
-                        Solo los usuarios del grupo Producto contable pueden ver
-                        este producto, aunque no tengan almacenes asignados.
+                        Los usuarios del grupo Producto contable y la cuenta
+                        principal de administrador pueden ver este producto,
+                        aunque no tengan almacenes asignados.
                         Se respetan las compañías seleccionadas. Este producto
                         no admite almacenes y todas sus variantes comparten
                         la misma clasificación.

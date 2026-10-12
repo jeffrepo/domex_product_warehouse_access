@@ -10,10 +10,4 @@
         <field name="implied_ids" eval="[Command.link(ref('base.group_user'))]"/>
         <field name="comment">Permite acceder a productos marcados como Producto contable sin almacenes asignados, respetando las compañías seleccionadas. No concede permisos de Contabilidad.</field>
     </record>
-    <!-- Initial configuration only; later membership changes must survive updates. -->
-    <data noupdate="1">
-        <record id="base.user_admin" model="res.users">
-            <field name="group_ids" eval="[Command.link(ref('group_accounting_product'))]"/>
-        </record>
-    </data>
 </odoo>

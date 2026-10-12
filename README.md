@@ -1,17 +1,18 @@
 # Domex: Productos por almacén
 
 Módulo independiente para Odoo 19. Nombre técnico:
-`domex_product_warehouse_access`. Versión `19.0.1.0.0`. Depende de `stock`.
+`domex_product_warehouse_access`. Versión `19.0.1.0.1`. Depende de `stock`.
 
 ## Reglas de acceso
 
 | Producto | Usuario | Acceso |
 | --- | --- | --- |
+| Cualquier producto | Cuenta principal de administrador | Sí, dentro de las compañías seleccionadas |
 | No contable, con almacenes | Tiene al menos uno de esos almacenes en una compañía seleccionada | Sí |
 | No contable, con almacenes | No comparte ningún almacén aplicable | No |
 | No contable, sin almacenes | Usuario habitual | No |
 | Contable, sin almacenes | Pertenece al grupo **Producto contable** | Sí, aunque el usuario no tenga almacenes |
-| Contable | No pertenece al grupo **Producto contable** | No, aunque tenga almacenes |
+| Contable | Usuario habitual sin el grupo **Producto contable** | No, aunque tenga almacenes |
 
 En todos los casos se respetan las compañías seleccionadas y las demás reglas
 de Odoo. El grupo de productos contables no concede permisos de Contabilidad.
@@ -60,12 +61,72 @@ los administradores de Ajustes puedan editarlos. Los usuarios no pueden
 asignarse almacenes ni cambiar la clasificación de un producto para ampliar
 su acceso. Las asignaciones y cambios de grupo surten efecto sin reiniciar Odoo.
 
-Los administradores de Ajustes pueden ver productos **no contables** sin
-restricción por almacén, dentro de las compañías seleccionadas. Para ver
-productos **contables** también necesitan el grupo nuevo. La instalación
-asigna inicialmente ese grupo al administrador principal (`base.user_admin`);
-otros administradores deben recibirlo explícitamente. Si se retira al
-administrador principal, una actualización no vuelve a añadirlo.
+La cuenta principal de administrador (`base.user_admin`) ve **todos los productos**
+de las compañías seleccionadas, contables y no contables, incluso sin almacenes
+ni el grupo Producto contable. La excepción identifica esa cuenta por su ID
+externo, no por su nombre o login. Los demás usuarios siguen las reglas aunque
+tengan la función **Administrador** (`base.group_system`) o sean responsables de
+Inventario o Contabilidad. Las asignaciones de grupos existentes se conservan
+al actualizar. Los permisos de Ajustes permiten administrar la configuración
+de seguridad; esta restricción de catálogo no retira esos permisos.
+
+## Cuándo se aplican las reglas
+
+Se aplican desde que el módulo está instalado y actualizado en la base de datos,
+en cada búsqueda de productos o variantes, incluidas las listas de Productos y
+los selectores de productos en facturas. No dependen de validar la factura ni
+de una tarea programada. Después de modificar permisos, volver a abrir la vista
+o el selector para descartar resultados que el navegador ya tenía cargados.
+
+Si un usuario ve todos los productos:
+
+1. Comprobar que no sea la cuenta principal `base.user_admin`. En `19.0.1.0.0`
+   la excepción alcanzaba a cualquier usuario con función Administrador;
+   desde `19.0.1.0.1` se limita a la cuenta principal.
+2. Comprobar que no está usando el modo superusuario; el modo desarrollador
+   por sí solo no omite las reglas.
+3. Verificar en Aplicaciones que `domex_product_warehouse_access` está instalado
+   y actualizado a `19.0.1.0.1`. El push a GitHub por sí solo no instala el módulo
+   ni actualiza los registros de seguridad de una base existente.
+4. En modo desarrollador, revisar en **Ajustes → Técnico → Seguridad → Reglas de
+   registro** las dos reglas cuyo nombre comienza por **Domex:**. Deben estar
+   activas, ser globales (sin grupos) y aplicar a `product.template` y
+   `product.product`, con lectura habilitada.
+5. Para una prueba controlada, usar un usuario normal sin almacenes ni grupo
+   Producto contable: no debe encontrar ningún producto. Asignarle un almacén
+   y verificar que encuentra exclusivamente productos vinculados a él, de las
+   compañías seleccionadas. El grupo contable añade únicamente los contables.
+
+Si esta prueba falla con un usuario normal, revisar la instalación, las reglas
+efectivas y posibles personalizaciones que utilicen `sudo()`. No debe añadirse
+un filtro visual como sustituto de las reglas de seguridad del servidor.
+
+## Categorías restringidas por compañía
+
+El acceso al producto no concede acceso a su categoría. Si otro módulo limita
+`product.category` a la compañía principal activa, un producto compartido que
+tenga categoría de otra compañía puede aparecer en la lista y fallar al abrir
+la ficha. La excepción de este módulo para la cuenta principal tampoco anula
+las reglas de otros modelos.
+
+En Odoo 19, un error de acceso con una compañía sugerida puede provocar una
+recarga automática del formulario. Odoo agrega esa compañía al conjunto de
+seleccionadas sin convertirla en la principal. Una regla que exige la compañía
+principal seguirá rechazando la categoría y puede provocar recargas repetidas.
+
+Desde `19.0.1.0.1`, para errores de productos, variantes y categorías, el módulo
+retira la indicación de recarga cuando la compañía sugerida ya está seleccionada.
+Conserva la denegación de acceso y su mensaje. Si la compañía aún no estaba
+seleccionada, conserva el intento nativo; si ese intento no resuelve el permiso,
+se muestra el error al volver a cargar, sin repetir indefinidamente. No concede
+acceso a categorías ni cambia automáticamente la compañía principal.
+
+Corregir la categoría del producto para el uso previsto o revisar la política
+de categorías compartidas. Un producto estándar tiene una sola categoría: no
+puede ofrecer una categoría distinta por cada almacén o compañía. Seleccionar
+la compañía de la categoría como principal sirve para comprobar el origen del
+error, siempre que el producto también sea accesible allí. Este módulo no
+modifica ni relaja las reglas del módulo de categorías.
 
 ## Instalación y catálogo existente
 
@@ -79,9 +140,10 @@ La instalación no deduce ni rellena asignaciones. Los productos existentes
 quedan inicialmente sin almacenes y con **Producto contable** desmarcado;
 los usuarios habituales no los verán hasta configurarlos. Preparar las
 asignaciones del catálogo y de los usuarios con un administrador antes de
-habilitar la operación habitual. La creación de nuevas plantillas queda en
-manos de los administradores, que pueden configurar esos campos; los demás
-usuarios conservan sus permisos nativos para los productos que pueden ver.
+habilitar la operación habitual. Preparar las nuevas plantillas desde la cuenta
+principal permite configurar esos campos antes de dar acceso al producto.
+Los demás usuarios conservan sus permisos nativos para los productos que
+pueden ver; los campos de configuración requieren permisos de Ajustes.
 
 El alcance es el acceso al catálogo. No agrega restricciones a documentos,
 movimientos ni existencias de cada almacén, ni sustituye sus permisos nativos.
@@ -95,6 +157,8 @@ revisarse aparte si se usan para exponer el catálogo.
 Se incluyen pruebas de integración de productos y variantes, ambos tipos de
 acceso, usuarios sin almacenes, multicompañía, coincidencia del mismo almacén,
 permisos por API, cambios de grupo/asignación, almacenes archivados y formularios.
+También se cubren la excepción exclusiva de la cuenta principal y la prevención
+de recargas repetidas en errores de acceso con una compañía ya seleccionada.
 
 ```sh
 odoo-bin -d BASE_DE_PRUEBAS -i domex_product_warehouse_access --test-enable --test-tags /domex_product_warehouse_access --stop-after-init

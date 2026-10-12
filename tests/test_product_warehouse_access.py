@@ -1,6 +1,9 @@
+from unittest.mock import patch
+
 from lxml import etree
 
 from odoo import Command
+from odoo.addons.base.models.ir_rule import IrRule as BaseIrRule
 from odoo.exceptions import AccessError, ValidationError
 from odoo.tests import Form, TransactionCase, tagged
 from odoo.tests.common import new_test_user
@@ -44,6 +47,12 @@ class TestProductWarehouseAccess(TransactionCase):
         cls.dual_user = make_user("domex_warehouse_dual", assigned, accounting=True)
         cls.administrator = make_user("domex_warehouse_admin", administrator=True)
         cls.accounting_admin = make_user("domex_warehouse_accounting_admin", accounting=True, administrator=True)
+        cls.primary_admin = cls.env.ref("base.user_admin").sudo()
+        cls.primary_admin.write({
+            "company_ids": [Command.link(company.id) for company in companies],
+            "domex_warehouse_ids": [Command.clear()],
+            "group_ids": [Command.unlink(cls.env.ref(ACCOUNTING_GROUP).id)],
+        })
         Template = cls.env["product.template"].sudo().with_context(
             allowed_company_ids=(companies | cls.company_c).ids,
         )
@@ -91,6 +100,10 @@ class TestProductWarehouseAccess(TransactionCase):
                 self.assertEqual(model.search_count(domain), len(expected_ids))
                 self.assertEqual({row["id"] for row in model.search_read(domain, ["name"])}, expected_ids)
                 self.assertEqual({record_id for record_id, _name in model.name_search(domain=domain)}, expected_ids)
+                self.assertEqual(
+                    {record_id for record_id, _name in model.name_search("Domex access", domain=domain)},
+                    expected_ids,
+                )
 
     def test_warehouse_access_without_inventory_permissions(self):
         self.assertFalse(self.operator.has_group("stock.group_stock_user"))
@@ -125,10 +138,51 @@ class TestProductWarehouseAccess(TransactionCase):
             self.regular_a | self.shared | self.accounting_a | self.accounting_shared, self.dual_user,
         )
 
-    def test_administrator_needs_accounting_group_too(self):
+    def test_principal_administrator_sees_all_products_without_assignments(self):
         regular = self.regular_a | self.regular_a2 | self.shared | self.cross_match | self.unassigned
-        self._assert_visible(regular, self.administrator)
-        self._assert_visible(regular | self.accounting_a | self.accounting_shared, self.accounting_admin)
+        self.assertFalse(self.primary_admin.has_group(ACCOUNTING_GROUP))
+        self.assertFalse(self.primary_admin.domex_warehouse_ids)
+        self._assert_visible(regular | self.accounting_a | self.accounting_shared, self.primary_admin)
+        self._assert_visible(
+            self.regular_b | self.shared | self.cross_match | self.unassigned
+            | self.accounting_b | self.accounting_shared,
+            self.primary_admin, self.company_b,
+        )
+        self._assert_visible(
+            self.products - self.accounting_c, self.primary_admin, self.company_a | self.company_b,
+        )
+
+    def test_settings_administrator_role_does_not_bypass_restrictions(self):
+        self.assertTrue(self.administrator.has_group("base.group_system"))
+        self._assert_visible(self.products.browse(), self.administrator)
+        self._assert_visible(self.accounting_a | self.accounting_shared, self.accounting_admin)
+        self.accounting_admin.sudo().write({"domex_warehouse_ids": [Command.link(self.warehouse_a.id)]})
+        self._assert_visible(
+            self.regular_a | self.shared | self.accounting_a | self.accounting_shared,
+            self.accounting_admin,
+        )
+
+    def test_account_name_does_not_grant_administrator_exception(self):
+        self.administrator.sudo().write({"name": self.primary_admin.name})
+        self._assert_visible(self.products.browse(), self.administrator)
+
+    def test_invoice_selector_domains_respect_warehouse_and_accounting_access(self):
+        # Same sale/purchase domains used by account.view_move_form in Odoo 19.
+        # Exercising the product selector does not require installing account.
+        for user, expected in (
+            (self.administrator, self.products.browse()),
+            (self.accounting_admin, self.accounting_a | self.accounting_shared),
+            (self.operator, self.regular_a | self.shared),
+            (self.empty_user, self.products.browse()),
+        ):
+            for move_type, flag in (("out_invoice", "sale_ok"), ("in_invoice", "purchase_ok")):
+                with self.subTest(user=user.login, move_type=move_type):
+                    model = self._model("product.product", user).with_context(default_move_type=move_type)
+                    found = model.name_search("Domex access", domain=[
+                        ("id", "in", self.products.product_variant_ids.ids), (flag, "=", True),
+                    ])
+                    allowed = expected.filtered(lambda product: product[flag]).product_variant_ids
+                    self.assertEqual({record_id for record_id, _name in found}, set(allowed.ids))
 
     def test_direct_access_to_hidden_records_is_denied(self):
         for template in (self.regular_a2, self.regular_b, self.accounting_a, self.unassigned):
@@ -250,7 +304,7 @@ class TestProductWarehouseAccess(TransactionCase):
         self.assertFalse(self.regular_a.domex_warehouse_ids)
 
     def test_form_onchange_clears_warehouses(self):
-        template = self._model("product.template", self.accounting_admin).browse(self.regular_a.id)
+        template = self._model("product.template", self.primary_admin).browse(self.regular_a.id)
         with Form(template) as form:
             form.domex_accounting_product = True
         self.assertTrue(template.domex_accounting_product)
@@ -261,7 +315,7 @@ class TestProductWarehouseAccess(TransactionCase):
             ("product.template", "product.product_template_only_form_view"),
             ("product.product", "product.product_normal_form_view"),
         ):
-            model = self._model(model_name, self.accounting_admin)
+            model = self._model(model_name, self.primary_admin)
             arch = etree.fromstring(model.get_view(
                 view_id=self.env.ref(view_ref).id, view_type="form",
             )["arch"])
@@ -282,6 +336,45 @@ class TestProductWarehouseAccess(TransactionCase):
         for model_name in ("product.template", "product.product"):
             with self.assertRaises(AccessError):
                 self._model(model_name, self.accountant, self.company_c).search([])
+
+    def test_denied_product_in_selected_company_does_not_trigger_reload(self):
+        for model_name in ("product.template", "product.product"):
+            record = self._model(model_name).browse(self._records(self.regular_a2, model_name).ids)
+            with self.assertRaises(AccessError) as caught:
+                record.read(["name"])
+            self.assertNotIn("suggested_company", getattr(caught.exception, "context", {}) or {})
+
+    def test_unselected_company_redirect_is_preserved(self):
+        for model_name in ("product.template", "product.product"):
+            record = self._model(model_name).browse(self._records(self.regular_b, model_name).ids)
+            with self.assertRaises(AccessError) as caught:
+                record.read(["name"])
+            self.assertEqual(caught.exception.context["suggested_company"]["id"], self.company_b.id)
+
+    def test_category_redirect_loop_is_stopped_without_granting_access(self):
+        # Simulate a category addon restricting the main company. B is selected
+        # after A, so appending B again cannot satisfy that category rule.
+        rules = self._model("ir.rule", companies=self.company_a | self.company_b)
+        for model_name in ("product.category", "product.template", "product.product"):
+            error = AccessError("Category/product is still restricted")
+            error.context = {
+                "suggested_company": {"id": self.company_b.id, "display_name": self.company_b.name},
+                "other_context": "preserved",
+            }
+            with patch.object(BaseIrRule, "_make_access_error", return_value=error):
+                result = rules._make_access_error("read", rules.env[model_name].browse())
+            self.assertIs(result, error)
+            self.assertEqual(result.args, ("Category/product is still restricted",))
+            self.assertEqual(result.context, {"other_context": "preserved"})
+
+    def test_redirect_handling_of_other_models_is_unchanged(self):
+        rules = self._model("ir.rule")
+        error = AccessError("Other model error")
+        error.context = {"suggested_company": {"id": self.company_a.id}}
+        with patch.object(BaseIrRule, "_make_access_error", return_value=error):
+            result = rules._make_access_error("read", rules.env["res.partner"].browse())
+        self.assertIs(result, error)
+        self.assertEqual(result.context["suggested_company"]["id"], self.company_a.id)
 
     def test_sudo_bypasses_record_rules(self):
         for model_name in ("product.template", "product.product"):

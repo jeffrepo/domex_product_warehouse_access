@@ -13,10 +13,9 @@
                         Sin almacenes asignados, el usuario solo podrá ver
                         productos contables si pertenece al grupo Producto contable.
                         Solo cuentan los almacenes de las compañías seleccionadas.
-                        Los administradores de Ajustes conservan acceso a los
-                        productos no contables de esas compañías, aunque no
-                        tengan almacenes. Para los productos contables también
-                        necesitan el grupo Producto contable.
+                        Solo la cuenta principal de administrador conserva acceso
+                        a todos los productos de esas compañías. Los demás usuarios
+                        siguen estas reglas aunque su función sea Administrador.
                     </div>
                 </group>
             </xpath>

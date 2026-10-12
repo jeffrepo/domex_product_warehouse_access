@@ -8,8 +8,9 @@ class ProductTemplate(models.Model):
     domex_accounting_product = fields.Boolean(
         string="Producto contable",
         groups="base.group_system",
-        help="Solo los miembros del grupo Producto contable pueden acceder a "
-             "este producto, dentro de sus compañías seleccionadas. "
+        help="Los miembros del grupo Producto contable y la cuenta principal "
+             "de administrador pueden acceder a este producto, dentro de sus "
+             "compañías seleccionadas. "
              "Los productos contables no tienen almacenes asignados.",
     )
 
