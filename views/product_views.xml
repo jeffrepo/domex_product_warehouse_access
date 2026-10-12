@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- This base form is inherited by both templates and product variants. -->
+    <record id="product_template_form_warehouse_access" model="ir.ui.view">
+        <field name="name">product.template.form.domex.warehouse.access</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page name="domex_warehouses" string="Acceso Domex" groups="base.group_system">
+                    <group>
+                        <field name="domex_accounting_product"/>
+                        <field name="domex_warehouse_ids" widget="many2many_tags"
+                               invisible="domex_accounting_product"
+                               options="{'no_create': True, 'no_open': True}"/>
+                    </group>
+                    <p class="text-muted" invisible="domex_accounting_product">
+                        El usuario podrá ver este producto si tiene al menos uno
+                        de estos almacenes asignado en una compañía seleccionada.
+                        La asignación se aplica a todas las variantes.
+                    </p>
+                    <p class="text-muted" invisible="domex_accounting_product">
+                        Un producto compartido (sin compañía) puede asignarse a
+                        almacenes de distintas compañías. Si tiene compañía,
+                        todos sus almacenes deben pertenecer a ella.
+                    </p>
+                    <p class="text-muted" invisible="not domex_accounting_product">
+                        Solo los usuarios del grupo Producto contable pueden ver
+                        este producto, aunque no tengan almacenes asignados.
+                        Se respetan las compañías seleccionadas. Este producto
+                        no admite almacenes y todas sus variantes comparten
+                        la misma clasificación.
+                    </p>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>

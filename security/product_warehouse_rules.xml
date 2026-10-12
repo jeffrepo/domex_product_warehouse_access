@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Global rules intersect with existing group rules and company rules. -->
+    <record id="product_template_warehouse_rule" model="ir.rule">
+        <field name="name">Domex: productos por almacenes y compañías permitidos</field>
+        <field name="model_id" ref="product.model_product_template"/>
+        <field name="domain_force">user._domex_product_warehouse_domain(company_ids)</field>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="True"/>
+        <field name="perm_create" eval="True"/>
+        <field name="perm_unlink" eval="True"/>
+    </record>
+    <record id="product_product_warehouse_rule" model="ir.rule">
+        <field name="name">Domex: variantes por almacenes y compañías permitidos</field>
+        <field name="model_id" ref="product.model_product_product"/>
+        <field name="domain_force">user._domex_product_warehouse_domain(company_ids)</field>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="True"/>
+        <field name="perm_create" eval="True"/>
+        <field name="perm_unlink" eval="True"/>
+    </record>
+</odoo>

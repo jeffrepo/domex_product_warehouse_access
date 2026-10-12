@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="res_users_form_warehouse_access" model="ir.ui.view">
+        <field name="name">res.users.form.domex.warehouse.access</field>
+        <field name="model">res.users</field>
+        <field name="inherit_id" ref="base.view_users_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page[@name='access_rights']" position="inside">
+                <group string="Domex: acceso a productos" groups="base.group_system">
+                    <field name="domex_warehouse_ids" widget="many2many_tags"
+                           options="{'no_create': True, 'no_open': True}"/>
+                    <div class="text-muted" colspan="2">
+                        Sin almacenes asignados, el usuario solo podrá ver
+                        productos contables si pertenece al grupo Producto contable.
+                        Solo cuentan los almacenes de las compañías seleccionadas.
+                        Los administradores de Ajustes conservan acceso a los
+                        productos no contables de esas compañías, aunque no
+                        tengan almacenes. Para los productos contables también
+                        necesitan el grupo Producto contable.
+                    </div>
+                </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>
