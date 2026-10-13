@@ -1,3 +1,4 @@
+from ast import literal_eval
 from unittest.mock import patch
 
 from lxml import etree
@@ -332,6 +333,45 @@ class TestProductWarehouseAccess(TransactionCase):
             })
         self._assert_visible(self.regular_a | self.shared)
 
+    def test_user_form_does_not_read_restricted_company_contacts_for_colors(self):
+        # Settings administrators can manage another user's allowed companies,
+        # even when those companies' contacts are outside their own selection
+        # or permissions. The tag color must not prevent opening that user.
+        self.operator.sudo().write({"company_ids": [Command.link(self.company_c.id)]})
+        for company in (self.company_b, self.company_c):
+            company.partner_id.sudo().write({"company_id": company.id})
+
+        user = self._model("res.users", self.administrator).browse(self.operator.id)
+        arch = etree.fromstring(user.get_view(
+            view_id=self.env.ref("base.view_users_form").id, view_type="form",
+        )["arch"])
+        company_nodes = arch.xpath("//page[@name='access_rights']//field[@name='company_ids']")
+        self.assertEqual(len(company_nodes), 1)
+        options = literal_eval(company_nodes[0].get("options", "{}"))
+        self.assertTrue(options["no_create"])
+        self.assertNotIn("color_field", options)
+
+        specification = {
+            "name": {},
+            "company_id": {"fields": {"display_name": {}}},
+            "company_ids": {"fields": {"display_name": {}}},
+        }
+        # Reproduce the native tag request: color reads res.partner and fails.
+        with self.assertRaises(AccessError):
+            user.web_read({
+                **specification,
+                "company_ids": {"fields": {"display_name": {}, "color": {}}},
+            })
+        data = user.web_read(specification)[0]
+        self.assertEqual(data["id"], self.operator.id)
+        self.assertEqual(
+            {company["id"] for company in data["company_ids"]},
+            set((self.company_a | self.company_b | self.company_c).ids),
+        )
+        for company in (self.company_b, self.company_c):
+            with self.subTest(company=company.name), self.assertRaises(AccessError):
+                self._model("res.partner", self.administrator).browse(company.partner_id.id).read(["name"])
+
     def test_unauthorized_company_context_is_rejected(self):
         for model_name in ("product.template", "product.product"):
             with self.assertRaises(AccessError):
@@ -372,9 +412,34 @@ class TestProductWarehouseAccess(TransactionCase):
         error = AccessError("Other model error")
         error.context = {"suggested_company": {"id": self.company_a.id}}
         with patch.object(BaseIrRule, "_make_access_error", return_value=error):
-            result = rules._make_access_error("read", rules.env["res.partner"].browse())
+            result = rules._make_access_error("read", rules.env["res.company"].browse())
         self.assertIs(result, error)
         self.assertEqual(result.context["suggested_company"]["id"], self.company_a.id)
+
+    def test_user_and_contact_redirects_only_keep_unselected_companies(self):
+        for model_name in ("res.users", "res.partner"):
+            for companies in (self.company_a, self.company_a | self.company_b):
+                with self.subTest(model=model_name, companies=companies.ids):
+                    rules = self._model("ir.rule", self.administrator, companies)
+                    error = AccessError("Contact/user is still restricted")
+                    error.context = {
+                        "suggested_company": {"id": self.company_b.id},
+                        "other_context": "preserved",
+                    }
+                    with patch.object(BaseIrRule, "_make_access_error", return_value=error):
+                        result = rules._make_access_error("read", rules.env[model_name].browse())
+                    self.assertIs(result, error)
+                    self.assertEqual(result.args, ("Contact/user is still restricted",))
+                    self.assertEqual(result.context["other_context"], "preserved")
+                    self.assertEqual("suggested_company" in result.context, self.company_b not in companies)
+
+    def test_contact_denial_without_company_suggestion_is_unchanged(self):
+        rules = self._model("ir.rule", self.administrator)
+        error = AccessError("Contact company is not allowed")
+        with patch.object(BaseIrRule, "_make_access_error", return_value=error):
+            result = rules._make_access_error("read", rules.env["res.partner"].browse())
+        self.assertIs(result, error)
+        self.assertFalse(getattr(result, "context", None))
 
     def test_sudo_bypasses_record_rules(self):
         for model_name in ("product.template", "product.product"):

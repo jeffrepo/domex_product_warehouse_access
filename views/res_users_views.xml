@@ -5,6 +5,11 @@
         <field name="model">res.users</field>
         <field name="inherit_id" ref="base.view_users_form"/>
         <field name="arch" type="xml">
+            <!-- Company colors read the company's partner. A user administrator
+                 can manage companies whose contacts they cannot read. -->
+            <xpath expr="//page[@name='access_rights']//field[@name='company_ids']" position="attributes">
+                <attribute name="options">{'no_create': True}</attribute>
+            </xpath>
             <xpath expr="//page[@name='access_rights']" position="inside">
                 <group string="Domex: acceso a productos" groups="base.group_system">
                     <field name="domex_warehouse_ids" widget="many2many_tags"

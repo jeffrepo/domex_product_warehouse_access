@@ -1,7 +1,7 @@
 # Domex: Productos por almacén
 
 Módulo independiente para Odoo 19. Nombre técnico:
-`domex_product_warehouse_access`. Versión `19.0.1.0.1`. Depende de `stock`.
+`domex_product_warehouse_access`. Versión `19.0.1.0.2`. Depende de `stock`.
 
 ## Reglas de acceso
 
@@ -86,7 +86,7 @@ Si un usuario ve todos los productos:
 2. Comprobar que no está usando el modo superusuario; el modo desarrollador
    por sí solo no omite las reglas.
 3. Verificar en Aplicaciones que `domex_product_warehouse_access` está instalado
-   y actualizado a `19.0.1.0.1`. El push a GitHub por sí solo no instala el módulo
+   y actualizado a `19.0.1.0.2`. El push a GitHub por sí solo no instala el módulo
    ni actualiza los registros de seguridad de una base existente.
 4. En modo desarrollador, revisar en **Ajustes → Técnico → Seguridad → Reglas de
    registro** las dos reglas cuyo nombre comienza por **Domex:**. Deben estar
@@ -128,6 +128,33 @@ la compañía de la categoría como principal sirve para comprobar el origen del
 error, siempre que el producto también sea accesible allí. Este módulo no
 modifica ni relaja las reglas del módulo de categorías.
 
+## Error de Contacto al abrir otro usuario
+
+El formulario estándar de Odoo 19 muestra las compañías permitidas mediante
+etiquetas de colores. Para obtener `res.company.color`, Odoo lee el color del
+contacto de la compañía raíz (`root_id.partner_id.color`). Un administrador
+de usuarios puede leer esas compañías sin tener acceso a sus contactos:
+pueden pertenecer a compañías no seleccionadas o no permitidas para él.
+En ese caso, la carga de `res.users/web_read` falla con un error de
+`res.partner`, aunque el contacto del usuario que está abriendo sea accesible.
+
+Desde `19.0.1.0.2`, las etiquetas del campo **Empresas** de ese formulario se
+muestran sin colores. Así se elimina esa lectura decorativa de contactos;
+se conserva la posibilidad de consultar y asignar compañías según los permisos
+nativos. No se cambian las compañías de los contactos ni se amplía su acceso.
+
+La protección contra recargas repetidas también cubre errores de `res.users`
+y `res.partner`. Solo retira la sugerencia de recarga cuando esa compañía ya
+está seleccionada; conserva el error y los demás datos de la excepción.
+
+El módulo no crea reglas de acceso para Contactos. Si el error persiste,
+identificar los contactos del log y las reglas que fallan en esa base. Los IDs
+del log no demuestran que se trate del contacto del usuario: pueden corresponder
+a compañías u otras relaciones. Revisar el dominio de las reglas activas de
+`res.partner` y las compañías seleccionadas; no resolverlo concediendo acceso
+general a todos los contactos. La corrección de las etiquetas evita una causa
+concreta, pero no suprime otras denegaciones legítimas o personalizadas.
+
 ## Instalación y catálogo existente
 
 Colocar este repositorio como una carpeta llamada
@@ -159,6 +186,9 @@ acceso, usuarios sin almacenes, multicompañía, coincidencia del mismo almacén
 permisos por API, cambios de grupo/asignación, almacenes archivados y formularios.
 También se cubren la excepción exclusiva de la cuenta principal y la prevención
 de recargas repetidas en errores de acceso con una compañía ya seleccionada.
+Para la administración de usuarios se incluye una prueba de lectura del
+formulario con contactos de compañías restringidos, tanto de una compañía
+permitida sin seleccionar como de otra no permitida al administrador.
 
 ```sh
 odoo-bin -d BASE_DE_PRUEBAS -i domex_product_warehouse_access --test-enable --test-tags /domex_product_warehouse_access --stop-after-init
