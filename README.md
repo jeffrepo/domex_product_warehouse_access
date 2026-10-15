@@ -1,7 +1,7 @@
 # Domex: Productos por almacén
 
 Módulo independiente para Odoo 19. Nombre técnico:
-`domex_product_warehouse_access`. Versión `19.0.1.1.1`. Depende de `stock`.
+`domex_product_warehouse_access`. Versión `19.0.1.1.2`. Depende de `stock` y `sale`.
 Incluye el control de categorías Vinyasa; no depende de `product_category_company`.
 
 ## Reglas de acceso
@@ -99,7 +99,7 @@ Si un usuario ve todos los productos:
 2. Comprobar que no está usando el modo superusuario; el modo desarrollador
    por sí solo no omite las reglas.
 3. Verificar en Aplicaciones que `domex_product_warehouse_access` está instalado
-   y actualizado a `19.0.1.1.1`. El push a GitHub por sí solo no instala el módulo
+   y actualizado a `19.0.1.1.2`. El push a GitHub por sí solo no instala el módulo
    ni actualiza los registros de seguridad de una base existente.
 4. En modo desarrollador, revisar en **Ajustes → Técnico → Seguridad → Reglas de
    registro** las reglas **Domex:** de productos, variantes y categorías.
@@ -153,7 +153,7 @@ Cambiar un padre no cambia la marca de sus hijas.
 
 ### Actualizar desde `19.0.1.1.0`
 
-Actualizar **domex_product_warehouse_access** a `19.0.1.1.1` en Aplicaciones.
+Actualizar **domex_product_warehouse_access** a `19.0.1.1.2` en Aplicaciones.
 Se conservan el mismo grupo, sus usuarios y las marcas existentes. La diferencia
 es que los miembros del grupo pasan de ver ambos catálogos a ver únicamente
 Vinyasa. No es necesario quitar y volver a asignar el grupo. Volver a abrir
@@ -165,7 +165,7 @@ Si ese módulo sigue instalado, sus reglas y validaciones también se aplican;
 este módulo no las modifica ni las desactiva automáticamente. Para usar
 exclusivamente el control solicitado:
 
-1. Actualizar **domex_product_warehouse_access** a `19.0.1.1.1` en la base de
+1. Actualizar **domex_product_warehouse_access** a `19.0.1.1.2` en la base de
    pruebas. No basta con descargar el código o reiniciar.
 2. Si ya se configuraron categorías con la primera implementación de Vinyasa
    en `product_category_company`, mantener ese módulo disponible durante esta
@@ -239,6 +239,27 @@ a compañías u otras relaciones. Revisar el dominio de las reglas activas de
 general a todos los contactos. La corrección de las etiquetas evita una causa
 concreta, pero no suprime otras denegaciones legítimas o personalizadas.
 
+## Fecha prevista en la lista de Ventas
+
+Desde `19.0.1.1.2`, el cálculo nativo de `sale.order.expected_date` se ejecuta
+con `compute_sudo=True`. Odoo consulta el tipo de producto de las líneas al
+calcular esa fecha. Si una venta existente contiene productos que el usuario
+ya no puede leer, mostrar la columna **Fecha prevista** podía bloquear toda
+la lista con un error de acceso a `product.product`.
+
+La elevación se limita al cálculo de la fecha de una venta accesible. Se
+conservan las reglas de acceso a ventas, las compañías seleccionadas y las
+restricciones del catálogo, incluidos almacenes, Producto contable y Vinyasa.
+No se omiten líneas para calcular una fecha parcial. El cálculo sigue siendo
+el nativo, con las políticas de entrega de `sale_stock`, pedidos cancelados y
+exclusión de servicios. El cambio no concede acceso a las fichas ni a los
+selectores de los productos restringidos. Abrir una venta y leer sus líneas
+puede seguir requiriendo acceso a esos productos.
+
+Actualizar el módulo en Aplicaciones a `19.0.1.1.2` después de desplegar el
+código. Esta versión añade la dependencia explícita de Ventas (`sale`) para
+extender su campo. No cambia asignaciones, compañías ni grupos existentes.
+
 ## Instalación y catálogo existente
 
 Colocar este repositorio como una carpeta llamada
@@ -280,6 +301,12 @@ permisos por grupo, cambios de clasificación, búsquedas y lectura directa de
 productos/variantes, selectores de facturas, importaciones protegidas,
 valores predeterminados, expansión de grupos y conservación de la protección
 al editar o eliminar. Ejecutarla sin `product_category_company` instalado.
+
+La suite de Ventas reproduce el fallo de `web_search_read` al calcular la fecha
+con productos restringidos y comprueba el acceso posterior al catálogo, las
+reglas por vendedor y compañía, productos contables y categorías Vinyasa,
+ventas vacías/canceladas y las dos políticas de entrega cuando está instalado
+`sale_stock`.
 
 ```sh
 odoo-bin -d BASE_DE_PRUEBAS -i domex_product_warehouse_access --test-enable --test-tags /domex_product_warehouse_access --stop-after-init

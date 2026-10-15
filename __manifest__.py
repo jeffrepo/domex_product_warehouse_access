@@ -1,11 +1,11 @@
 {
     "name": "Domex: Productos por almacén",
     "summary": "Productos por almacén, productos contables y categorías Vinyasa, multicompañía",
-    "version": "19.0.1.1.1",
+    "version": "19.0.1.1.2",
     "category": "Inventory/Inventory",
     "author": "Silva Technologies",
     "license": "LGPL-3",
-    "depends": ["stock"],
+    "depends": ["stock", "sale"],
     "data": [
         "security/groups.xml",
         "security/product_warehouse_rules.xml",
