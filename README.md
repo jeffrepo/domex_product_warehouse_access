@@ -1,7 +1,8 @@
 # Domex: Productos por almacén
 
 Módulo independiente para Odoo 19. Nombre técnico:
-`domex_product_warehouse_access`. Versión `19.0.1.0.2`. Depende de `stock`.
+`domex_product_warehouse_access`. Versión `19.0.1.1.0`. Depende de `stock`.
+Incluye el control de categorías Vinyasa; no depende de `product_category_company`.
 
 ## Reglas de acceso
 
@@ -18,6 +19,12 @@ En todos los casos se respetan las compañías seleccionadas y las demás reglas
 de Odoo. El grupo de productos contables no concede permisos de Contabilidad.
 Un usuario puede combinar el grupo contable con varios almacenes y obtener
 ambos conjuntos de productos.
+
+Si la categoría del producto está marcada **Vinyasa**, se requiere además el
+grupo **Vinyasa**, salvo para la cuenta principal de administrador. Las
+categorías sin marcar permanecen compartidas: no se filtran por compañía,
+almacenes, grupo contable ni por la marca de una categoría padre. Compartir
+una categoría no elimina los requisitos de acceso de sus productos.
 
 Las reglas globales se aplican a productos y variantes, búsquedas, selectores,
 lectura directa, creación, edición y eliminación mediante el ORM/API. Otros
@@ -50,6 +57,10 @@ comparten los almacenes y la clasificación de su plantilla.
    (`domex_product_warehouse_access.group_accounting_product`).
 4. Abrir un producto y su pestaña **Acceso Domex**. Asignar varios almacenes o
    marcar **Producto contable**.
+5. En **Categorías de producto**, marcar **Vinyasa** exclusivamente en las
+   categorías que deban restringirse. También puede editarse desde la lista.
+6. Asignar el grupo **Vinyasa**, en **Domex: Categorías Vinyasa**, a los usuarios
+   autorizados (`domex_product_warehouse_access.group_vinyasa`).
 
 Al marcar **Producto contable** en el formulario se vacían los almacenes. La
 validación del servidor rechaza productos contables con almacenes también en
@@ -86,12 +97,12 @@ Si un usuario ve todos los productos:
 2. Comprobar que no está usando el modo superusuario; el modo desarrollador
    por sí solo no omite las reglas.
 3. Verificar en Aplicaciones que `domex_product_warehouse_access` está instalado
-   y actualizado a `19.0.1.0.2`. El push a GitHub por sí solo no instala el módulo
+   y actualizado a `19.0.1.1.0`. El push a GitHub por sí solo no instala el módulo
    ni actualiza los registros de seguridad de una base existente.
 4. En modo desarrollador, revisar en **Ajustes → Técnico → Seguridad → Reglas de
-   registro** las dos reglas cuyo nombre comienza por **Domex:**. Deben estar
-   activas, ser globales (sin grupos) y aplicar a `product.template` y
-   `product.product`, con lectura habilitada.
+   registro** las reglas **Domex:** de productos, variantes y categorías.
+   Deben estar activas, ser globales (sin grupos) y aplicar a
+   `product.template`, `product.product` y `product.category`, con lectura habilitada.
 5. Para una prueba controlada, usar un usuario normal sin almacenes ni grupo
    Producto contable: no debe encontrar ningún producto. Asignarle un almacén
    y verificar que encuentra exclusivamente productos vinculados a él, de las
@@ -101,7 +112,64 @@ Si esta prueba falla con un usuario normal, revisar la instalación, las reglas
 efectivas y posibles personalizaciones que utilicen `sudo()`. No debe añadirse
 un filtro visual como sustituto de las reglas de seguridad del servidor.
 
-## Categorías restringidas por compañía
+## Categorías compartidas y Vinyasa
+
+| Categoría | Sin grupo Vinyasa | Con grupo Vinyasa | Cuenta principal |
+| --- | --- | --- | --- |
+| Vinyasa desmarcado | Visible | Visible | Visible |
+| Vinyasa marcado | Oculta | Visible | Visible |
+
+Se conservan las ACL nativas de categorías. El grupo Vinyasa no concede
+permisos de administración ni acceso a compañías adicionales. Los demás
+administradores de Ajustes también necesitan el grupo para ver las categorías
+marcadas; la excepción automática es solo para `base.user_admin`.
+
+La marca es **individual**, no se hereda. Una hija sin marcar sigue compartida
+aunque su padre sea Vinyasa; marcar una hija no restringe su padre ni sus
+hermanas. Para restringir varias categorías, marcarlas individualmente o desde
+la edición en bloque de la lista. No se deduce la marca por el nombre de la
+categoría ni por una compañía llamada Vinyasa.
+
+Los productos y variantes cuya categoría está marcada se ocultan a quienes
+no tienen el grupo, también en selectores de facturas y lecturas por API.
+Esto evita ofrecer un producto cuya categoría no se pueda abrir. Para los
+miembros del grupo continúan aplicándose los requisitos de almacenes,
+Producto contable y compañías seleccionadas. Un producto contable de una
+categoría Vinyasa requiere ambos grupos. Los productos de categorías sin
+marcar, o sin categoría, mantienen las reglas anteriores de productos.
+
+Solo Ajustes puede editar el booleano, también por importación/API. Los demás
+usuarios no pueden quitar la protección cambiando un producto a una categoría
+sin marcar, ni eliminando una categoría padre que arrastraría una categoría
+Vinyasa. Las categorías comunes sí pueden crearse, duplicarse y compartirse
+con los permisos nativos. Cambiar un padre no cambia la marca de sus hijas.
+
+### Retirar `product_category_company`
+
+Si ese módulo sigue instalado, sus reglas y validaciones también se aplican;
+este módulo no las modifica ni las desactiva automáticamente. Para usar
+exclusivamente el control solicitado:
+
+1. Actualizar **domex_product_warehouse_access** a `19.0.1.1.0` en la base de
+   pruebas. No basta con descargar el código o reiniciar.
+2. Si ya se configuraron categorías con la primera implementación de Vinyasa
+   en `product_category_company`, mantener ese módulo disponible durante esta
+   actualización. El nuevo módulo declara el mismo campo `domex_vinyasa` para
+   conservar sus marcas al retirar el anterior. El grupo ahora pertenece a
+   **domex_product_warehouse_access**: asignar los usuarios a este nuevo grupo.
+3. Desinstalar **product_category_company** desde Aplicaciones. No borrar
+   primero la carpeta de un módulo todavía instalado. Se retira su separación
+   por compañía; las categorías conservan el comportamiento compartido nativo.
+4. Verificar las categorías marcadas y los miembros del nuevo grupo antes de
+   pasar a producción. La restricción heredada de padres de aquella primera
+   implementación desaparece: únicamente cuentan las marcas individuales.
+
+La nueva función no asigna grupos automáticamente ni marca categorías
+existentes que no lo estuvieran. Se conservan las asignaciones de almacenes
+y Producto contable. Las propiedades contables dependientes de compañía
+continúan con el comportamiento nativo de Odoo.
+
+## Errores de categoría por reglas de otros módulos
 
 El acceso al producto no concede acceso a su categoría. Si otro módulo limita
 `product.category` a la compañía principal activa, un producto compartido que
@@ -125,8 +193,9 @@ Corregir la categoría del producto para el uso previsto o revisar la política
 de categorías compartidas. Un producto estándar tiene una sola categoría: no
 puede ofrecer una categoría distinta por cada almacén o compañía. Seleccionar
 la compañía de la categoría como principal sirve para comprobar el origen del
-error, siempre que el producto también sea accesible allí. Este módulo no
-modifica ni relaja las reglas del módulo de categorías.
+error, siempre que el producto también sea accesible allí. Las reglas de
+módulos externos deben revisarse o retirarse según la política de categorías
+compartidas; la regla Vinyasa de este módulo no las sustituye.
 
 ## Error de Contacto al abrir otro usuario
 
@@ -189,6 +258,13 @@ de recargas repetidas en errores de acceso con una compañía ya seleccionada.
 Para la administración de usuarios se incluye una prueba de lectura del
 formulario con contactos de compañías restringidos, tanto de una compañía
 permitida sin seleccionar como de otra no permitida al administrador.
+
+La suite Vinyasa cubre categorías compartidas entre compañías, marcas
+individuales sin herencia, lectura del formulario de una hija compartida,
+permisos por grupo, cambios de clasificación, búsquedas y lectura directa de
+productos/variantes, selectores de facturas, importaciones protegidas,
+valores predeterminados, expansión de grupos y conservación de la protección
+al editar o eliminar. Ejecutarla sin `product_category_company` instalado.
 
 ```sh
 odoo-bin -d BASE_DE_PRUEBAS -i domex_product_warehouse_access --test-enable --test-tags /domex_product_warehouse_access --stop-after-init

@@ -69,4 +69,25 @@ class ResUsers(models.Model):
         if self.has_group("domex_product_warehouse_access.group_accounting_product"):
             accounting_domain = Domain("domex_accounting_product", "=", True)
 
-        return company_domain & (regular_domain | accounting_domain)
+        return (
+            company_domain & (regular_domain | accounting_domain)
+            & self._domex_product_category_domain()
+        )
+
+    def _domex_category_access_domain(self):
+        self.ensure_one()
+        administrator = self.env.ref("base.user_admin", raise_if_not_found=False)
+        if (administrator and self.id == administrator.id) or self.has_group(
+            "domex_product_warehouse_access.group_vinyasa"
+        ):
+            return Domain.TRUE
+        # Only the category's own flag restricts access; no company or ancestor
+        # condition. Keep this in SQL so changes do not cache category IDs.
+        return Domain("domex_vinyasa", "=", False)
+
+    def _domex_product_category_domain(self):
+        # Products without a category still follow warehouse/accounting rules.
+        # any! checks the flag without requiring category configuration rights.
+        return Domain("categ_id", "=", False) | Domain(
+            "categ_id", "any!", self._domex_category_access_domain(),
+        )
