@@ -13,7 +13,9 @@ class ProductCategory(models.Model):
         groups="base.group_system",
         help="Solo los usuarios del grupo Vinyasa y la cuenta principal de "
              "administrador pueden acceder a esta categoría y sus productos. "
-             "Sin marcar, la categoría sigue compartida entre compañías. "
+             "Los miembros de Vinyasa ven únicamente las categorías marcadas. "
+             "Sin marcar, la categoría se comparte entre compañías para los "
+             "usuarios sin ese grupo. "
              "La marca no se hereda a las subcategorías.",
     )
 

@@ -120,9 +120,10 @@ class TestVinyasaCategories(TransactionCase):
         self.assertFalse(category.sudo().domex_vinyasa)
         self._model("product.category", companies=self.company_b).browse(category.id).read(["name"])
 
-    def test_group_adds_flagged_categories_without_granting_companies(self):
-        self._assert_categories(self.categories, self.member)
-        self._assert_categories(self.categories, self.member_a)
+    def test_group_only_sees_flagged_categories_without_granting_companies(self):
+        for companies in (self.company_a, self.company_b, self.companies):
+            self._assert_categories(self.vinyasa, self.member, companies)
+        self._assert_categories(self.vinyasa, self.member_a)
         self.assertEqual(self.member_a.company_ids, self.company_a)
 
     def test_only_principal_admin_is_exempt_without_group(self):
@@ -131,14 +132,20 @@ class TestVinyasaCategories(TransactionCase):
         self._assert_categories(self.shared_categories, self.settings)
         self.settings.sudo().write({"name": self.primary_admin.name})
         self._assert_categories(self.shared_categories, self.settings)
+        group = self.env.ref(VINYASA_GROUP)
+        self.settings.sudo().write({"group_ids": [Command.link(group.id)]})
+        self._assert_categories(self.vinyasa, self.settings)
+        self.primary_admin.write({"group_ids": [Command.link(group.id)]})
+        self._assert_categories(self.categories, self.primary_admin)
+        self._assert_products(self.products - self.company_b_product, self.primary_admin)
 
     def test_group_changes_invalidate_categories_and_products(self):
         group = self.env.ref(VINYASA_GROUP)
         self._assert_categories(self.shared_categories)
         self._assert_products(self.shared_products)
         self.user.sudo().write({"group_ids": [Command.link(group.id)]})
-        self._assert_categories(self.categories)
-        self._assert_products(self.products - self.company_b_product)
+        self._assert_categories(self.vinyasa)
+        self._assert_products(self.restricted_product)
         self.user.sudo().write({"group_ids": [Command.unlink(group.id)]})
         self._assert_categories(self.shared_categories)
         self._assert_products(self.shared_products)
@@ -152,11 +159,22 @@ class TestVinyasaCategories(TransactionCase):
         with self.assertRaises(AccessError), self.cr.savepoint():
             category.unlink()
 
+    def test_vinyasa_member_cannot_access_unmarked_categories_directly(self):
+        for record in self.shared_categories:
+            category = self._model("product.category", self.member).browse(record.id)
+            with self.subTest(category=record.id), self.assertRaises(AccessError):
+                category.read(["name"])
+            with self.assertRaises(AccessError), self.cr.savepoint():
+                category.write({"name": "Forbidden"})
+            with self.assertRaises(AccessError), self.cr.savepoint():
+                category.unlink()
+        with self.assertRaises(AccessError), self.cr.savepoint():
+            self._model("product.category", self.member).create({"name": "Forbidden shared category"})
+
     def test_products_and_variants_follow_their_own_category_flag(self):
         self._assert_products(self.shared_products)
-        expected = self.products - self.company_b_product
-        self._assert_products(expected, self.member)
-        self._assert_products(expected, self.primary_admin)
+        self._assert_products(self.restricted_product, self.member)
+        self._assert_products(self.products - self.company_b_product, self.primary_admin)
         for name in ("product.template", "product.product"):
             record = self.restricted_product if name == "product.template" else self.restricted_product.product_variant_id
             with self.assertRaises(AccessError):
@@ -164,10 +182,14 @@ class TestVinyasaCategories(TransactionCase):
             self._model(name).browse(
                 self.child_product.id if name == "product.template" else self.child_product.product_variant_id.id,
             ).read(["name", "categ_id"])
+            for shared in self.shared_products:
+                shared_record = shared if name == "product.template" else shared.product_variant_id
+                with self.subTest(model=name, product=shared_record.id), self.assertRaises(AccessError):
+                    self._model(name, self.member).browse(shared_record.id).read(["name", "categ_id"])
 
     def test_vinyasa_group_does_not_bypass_product_companies(self):
-        self._assert_products(self.products - self.company_b_product, self.member_a)
-        self._assert_products(self.products, self.member, self.companies)
+        self._assert_products(self.restricted_product, self.member_a)
+        self._assert_products(self.restricted_product | self.company_b_product, self.member, self.companies)
         with self.assertRaises(AccessError):
             self._model("product.template", self.member_a).browse(self.company_b_product.id).read(["name"])
 
@@ -177,9 +199,13 @@ class TestVinyasaCategories(TransactionCase):
         self.vinyasa.sudo().write({"domex_vinyasa": False})
         self._assert_categories(self.categories)
         self._assert_products(self.products - self.company_b_product)
+        self._assert_categories(self.categories.browse(), self.member)
+        self._assert_products(self.products.browse(), self.member)
         self.child.sudo().write({"domex_vinyasa": True})
         self._assert_categories(self.categories - self.child)
         self._assert_products(self.common_product | self.uncategorized | self.restricted_product)
+        self._assert_categories(self.child, self.member)
+        self._assert_products(self.child_product, self.member)
         self.child.sudo().write({"domex_vinyasa": False})
         self.vinyasa.sudo().write({"domex_vinyasa": True})
         self.child.sudo().write({"parent_id": self.common_a.id})
@@ -187,17 +213,21 @@ class TestVinyasaCategories(TransactionCase):
         self._assert_products(self.shared_products)
 
     def test_parent_changes_do_not_reclassify_categories(self):
-        child = self._model("product.category", self.member).browse(self.child.id)
+        child = self._model("product.category", self.primary_admin).browse(self.child.id)
         child.write({"parent_id": self.common_a.id})
         child.write({"parent_id": self.vinyasa.id})
         self.assertFalse(child.sudo().domex_vinyasa)
         self._assert_categories(self.shared_categories)
         self._assert_products(self.shared_products)
+        self._assert_categories(self.vinyasa, self.member)
+        self._assert_products(self.restricted_product, self.member)
 
     def test_flags_are_protected_in_api_and_import(self):
-        for user in (self.user, self.member):
+        for user, category in ((self.user, self.common_a), (self.member, self.vinyasa)):
             with self.assertRaises(AccessError), self.cr.savepoint():
-                self._model("product.category", user).browse(self.common_a.id).write({"domex_vinyasa": True})
+                self._model("product.category", user).browse(category.id).write({
+                    "domex_vinyasa": not category.domex_vinyasa,
+                })
             with self.assertRaises(AccessError), self.cr.savepoint():
                 self._model("product.category", user).create({"name": "Forbidden", "domex_vinyasa": True})
         result = self._model("product.category").load(
@@ -254,6 +284,25 @@ class TestVinyasaCategories(TransactionCase):
         )
         self.assertFalse(expanded)
 
+    def test_vinyasa_defaults_and_group_expansion_exclude_shared_categories(self):
+        for name in ("product.template", "product.product"):
+            model = self._model(name, self.member, self.company_b)
+            defaults = model.with_context(default_categ_id=self.vinyasa.id).default_get(["categ_id"])
+            self.assertEqual(defaults["categ_id"], self.vinyasa.id)
+            for category in self.shared_categories:
+                defaults = model.with_context(default_categ_id=category.id).default_get(["categ_id"])
+                self.assertFalse(defaults.get("categ_id"))
+        products = self._model("product.template", self.member).with_context(group_expand=True)
+        expanded = products._read_group_categ_id(
+            self._model("product.category", self.member).browse(), [],
+        )
+        self.assertIn(self.vinyasa.id, expanded.ids)
+        self.assertFalse(set(self.shared_categories.ids) & set(expanded.ids))
+        expanded = products.with_context(default_categ_id=self.common_a.id)._read_group_categ_id(
+            self._model("product.category", self.member).browse(), [],
+        )
+        self.assertFalse(expanded)
+
     def test_global_rule_cannot_be_bypassed_by_permissive_groups(self):
         for name in ("product.category", "product.template", "product.product"):
             self.env["ir.rule"].sudo().create({
@@ -263,6 +312,8 @@ class TestVinyasaCategories(TransactionCase):
             })
         self._assert_categories(self.shared_categories)
         self._assert_products(self.shared_products)
+        self._assert_categories(self.vinyasa, self.member)
+        self._assert_products(self.restricted_product, self.member)
 
     def test_views_expose_classification_only_to_settings(self):
         for xmlid, view_type in (
@@ -276,13 +327,14 @@ class TestVinyasaCategories(TransactionCase):
 
     def test_vinyasa_group_still_requires_warehouses_for_products(self):
         self.member.sudo().write({"domex_warehouse_ids": [Command.clear()]})
-        self._assert_categories(self.categories, self.member)
+        self._assert_categories(self.vinyasa, self.member)
         self._assert_products(self.products.browse(), self.member)
         self.member.sudo().write({"domex_warehouse_ids": [Command.set(self.warehouse_a.ids)]})
-        self._assert_products(self.products - self.company_b_product, self.member)
+        self._assert_products(self.restricted_product, self.member)
 
     def test_accounting_products_require_both_groups_when_category_is_vinyasa(self):
-        self.restricted_product.sudo().write({
+        accounting_products = self.restricted_product | self.common_product | self.uncategorized
+        accounting_products.sudo().write({
             "domex_accounting_product": True, "domex_warehouse_ids": [Command.clear()],
         })
         self.member.sudo().write({"domex_warehouse_ids": [Command.clear()]})
@@ -290,4 +342,4 @@ class TestVinyasaCategories(TransactionCase):
         self.member.sudo().write({"group_ids": [Command.link(self.env.ref(ACCOUNTING_GROUP).id)]})
         self._assert_products(self.restricted_product, self.member)
         self.member.sudo().write({"group_ids": [Command.unlink(self.env.ref(VINYASA_GROUP).id)]})
-        self._assert_products(self.products.browse(), self.member)
+        self._assert_products(self.common_product | self.uncategorized, self.member)

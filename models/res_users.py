@@ -77,17 +77,21 @@ class ResUsers(models.Model):
     def _domex_category_access_domain(self):
         self.ensure_one()
         administrator = self.env.ref("base.user_admin", raise_if_not_found=False)
-        if (administrator and self.id == administrator.id) or self.has_group(
-            "domex_product_warehouse_access.group_vinyasa"
-        ):
+        if administrator and self.id == administrator.id:
             return Domain.TRUE
-        # Only the category's own flag restricts access; no company or ancestor
-        # condition. Keep this in SQL so changes do not cache category IDs.
-        return Domain("domex_vinyasa", "=", False)
+        # Membership selects one category set, not an additional permission.
+        # Company and ancestor flags do not change the category's own flag.
+        return Domain("domex_vinyasa", "=", self.has_group(
+            "domex_product_warehouse_access.group_vinyasa"
+        ))
 
     def _domex_product_category_domain(self):
-        # Products without a category still follow warehouse/accounting rules.
+        # The principal administrator already bypasses this filter above.
         # any! checks the flag without requiring category configuration rights.
-        return Domain("categ_id", "=", False) | Domain(
+        domain = Domain(
             "categ_id", "any!", self._domex_category_access_domain(),
         )
+        if not self.has_group("domex_product_warehouse_access.group_vinyasa"):
+            # Uncategorised products belong to the non-Vinyasa catalogue.
+            domain |= Domain("categ_id", "=", False)
+        return domain
