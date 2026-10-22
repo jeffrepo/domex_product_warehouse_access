@@ -7,24 +7,45 @@
         <field name="inherit_id" ref="product.product_template_form_view"/>
         <field name="arch" type="xml">
             <xpath expr="//notebook" position="inside">
-                <page name="domex_warehouses" string="Acceso Domex" groups="base.group_system">
-                    <group>
+                <page name="domex_warehouses" string="Acceso Domex"
+                      groups="base.group_system,product.group_product_manager">
+                    <group groups="base.group_system">
                         <field name="domex_accounting_product"/>
                         <field name="domex_warehouse_ids" widget="many2many_tags"
                                invisible="domex_accounting_product"
                                options="{'no_create': True, 'no_open': True}"/>
                     </group>
-                    <p class="text-muted" invisible="domex_accounting_product">
+                    <group groups="product.group_product_manager,!base.group_system">
+                        <field name="domex_available_warehouse_ids" invisible="1"/>
+                        <field name="domex_warehouse_assignment_required" invisible="1"/>
+                        <field name="domex_warehouse_ids" widget="many2many_tags"
+                               domain="[('id', 'in', domex_available_warehouse_ids)]"
+                               required="domex_warehouse_assignment_required"
+                               invisible="not domex_warehouse_assignment_required"
+                               options="{'no_create': True, 'no_open': True}"/>
+                        <p class="text-muted" invisible="not domex_warehouse_assignment_required">
+                            Seleccione al menos uno de sus almacenes permitidos para
+                            guardar el producto. Solo puede asignar o retirar sus
+                            almacenes activos de las compañías seleccionadas,
+                            compatibles con la compañía del producto. Conserve las
+                            asignaciones que no tenga autorizadas.
+                        </p>
+                        <p class="text-muted" invisible="domex_warehouse_assignment_required">
+                            Este producto es contable y no utiliza almacenes.
+                            Solo Ajustes puede cambiar su clasificación.
+                        </p>
+                    </group>
+                    <p class="text-muted" groups="base.group_system" invisible="domex_accounting_product">
                         El usuario podrá ver este producto si tiene al menos uno
                         de estos almacenes asignado en una compañía seleccionada.
                         La asignación se aplica a todas las variantes.
                     </p>
-                    <p class="text-muted" invisible="domex_accounting_product">
+                    <p class="text-muted" groups="base.group_system" invisible="domex_accounting_product">
                         Un producto compartido (sin compañía) puede asignarse a
                         almacenes de distintas compañías. Si tiene compañía,
                         todos sus almacenes deben pertenecer a ella.
                     </p>
-                    <p class="text-muted" invisible="not domex_accounting_product">
+                    <p class="text-muted" groups="base.group_system" invisible="not domex_accounting_product">
                         Los usuarios del grupo Producto contable y la cuenta
                         principal de administrador pueden ver este producto,
                         aunque no tengan almacenes asignados.

@@ -217,9 +217,8 @@ class TestProductWarehouseAccess(TransactionCase):
         for model_name in ("product.template", "product.product"):
             model = self._model(model_name)
             for values in (
-                {"name": "Hidden unassigned product"},
                 {"name": "Forbidden accounting", "domex_accounting_product": True},
-                {"name": "Forbidden warehouse", "domex_warehouse_ids": [Command.link(self.warehouse_a.id)]},
+                {"name": "Forbidden warehouse", "domex_warehouse_ids": [Command.link(self.warehouse_a2.id)]},
             ):
                 with self.subTest(model=model_name, values=values):
                     with self.assertRaises(AccessError), self.cr.savepoint():
@@ -227,9 +226,233 @@ class TestProductWarehouseAccess(TransactionCase):
             with self.assertRaises(AccessError), self.cr.savepoint():
                 model.with_context(default_domex_accounting_product=True).create({"name": "Context bypass"})
             with self.assertRaises(AccessError), self.cr.savepoint():
-                model.with_context(default_domex_warehouse_ids=[Command.link(self.warehouse_a.id)]).create({
+                model.with_context(default_domex_warehouse_ids=[Command.link(self.warehouse_a2.id)]).create({
                     "name": "Warehouse context bypass",
                 })
+
+    def test_creators_can_choose_warehouses_on_both_forms(self):
+        # Reproduce Rudy: native creation rights, accounting and all categories,
+        # but no Settings or Inventory permissions. A category is optional.
+        self.dual_user.sudo().write({"group_ids": [Command.link(self.env.ref(
+            "domex_product_warehouse_access.group_all_product_categories",
+        ).id)]})
+        category = self.env["product.category"].sudo().create({"name": "Creation category"})
+        for model_name in ("product.template", "product.product"):
+            model = self._model(model_name, self.dual_user)
+            fields = model.fields_get()
+            self.assertIn("domex_warehouse_ids", fields)
+            self.assertNotIn("domex_accounting_product", fields)
+            for category_record in (category, category.browse()):
+                with self.subTest(model=model_name, category=category_record.ids):
+                    with Form(model) as form:
+                        form.name = "Product created by a warehouse user"
+                        form.company_id = self.company_a
+                        form.categ_id = category_record
+                        form.domex_warehouse_ids.add(self.warehouse_a)
+                    product = form.record
+                    self.assertEqual(product.sudo().domex_warehouse_ids, self.warehouse_a)
+                    self.assertFalse(product.sudo().domex_accounting_product)
+                    self.assertEqual(product.create_uid, self.dual_user)
+                    product.read(["name"])
+                    template = product if model_name == "product.template" else product.product_tmpl_id
+                    template.product_variant_ids.read(["name"])
+
+    def test_creator_warehouse_choices_follow_company_and_assignments(self):
+        for model_name in ("product.template", "product.product"):
+            model = self._model(model_name)
+            self.assertEqual(model.new({"company_id": False}).domex_available_warehouse_ids, self.warehouse_a)
+            self.assertFalse(model.new({"company_id": self.company_b.id}).domex_available_warehouse_ids)
+            both = model.with_context(allowed_company_ids=(self.company_a | self.company_b).ids)
+            self.assertEqual(
+                set(both.new({"company_id": False}).domex_available_warehouse_ids.ids),
+                set((self.warehouse_a | self.warehouse_b).ids),
+            )
+            self.assertEqual(both.new({"company_id": self.company_b.id}).domex_available_warehouse_ids, self.warehouse_b)
+        self.warehouse_a.sudo().active = False
+        self.assertFalse(self._model("product.template").new({"company_id": self.company_a.id}).domex_available_warehouse_ids)
+
+    def test_missing_warehouses_explain_creation_requirement(self):
+        for user in (self.operator, self.dual_user, self.empty_user):
+            for model_name in ("product.template", "product.product"):
+                with self.subTest(user=user.login, model=model_name):
+                    with self.assertRaisesRegex(ValidationError, "Acceso Domex"), self.cr.savepoint():
+                        self._model(model_name, user).create({"name": "Unassigned new product", "categ_id": False})
+        # The principal administrator can still prepare unassigned products.
+        self._model("product.template", self.primary_admin).create({"name": "Admin preparation"})
+
+    def test_creators_can_update_only_their_warehouse_assignments(self):
+        self.operator.sudo().write({"domex_warehouse_ids": [Command.link(self.warehouse_a2.id)]})
+        for model_name in ("product.template", "product.product"):
+            # A shared product also has a B warehouse, hidden with only A selected.
+            self.shared.sudo().write({"domex_warehouse_ids": [Command.set(
+                (self.warehouse_a | self.warehouse_b).ids,
+            )]})
+            product = self._model(model_name).browse(self._records(self.shared, model_name).id)
+            product.web_read({"domex_warehouse_ids": {"fields": {"display_name": {}}}})
+            product.write({"domex_warehouse_ids": [
+                Command.link(self.warehouse_a2.id), Command.unlink(self.warehouse_a.id),
+            ]})
+            self.assertEqual(
+                set(self.shared.sudo().domex_warehouse_ids.ids),
+                set((self.warehouse_a2 | self.warehouse_b).ids),
+            )
+            product.read(["name"])
+            product.write({"name": "Warehouse change preserves normal editing"})
+            with self.assertRaises(ValidationError), self.cr.savepoint():
+                product.write({"domex_warehouse_ids": [Command.unlink(self.warehouse_a2.id)]})
+
+    def test_creators_cannot_remove_protected_assignments(self):
+        self.shared.sudo().write({"domex_warehouse_ids": [Command.link(self.warehouse_a2.id)]})
+        for model_name in ("product.template", "product.product"):
+            product = self._model(model_name).browse(self._records(self.shared, model_name).id)
+            for commands in (
+                [Command.unlink(self.warehouse_a2.id)],
+                [Command.unlink(self.warehouse_b.id)],
+                [Command.clear()],
+                [Command.set(self.warehouse_a.ids)],
+            ):
+                with self.subTest(model=model_name, commands=commands):
+                    with self.assertRaises(AccessError), self.cr.savepoint():
+                        product.write({"domex_warehouse_ids": commands})
+        self.assertEqual(
+            set(self.shared.sudo().domex_warehouse_ids.ids),
+            set((self.warehouse_a | self.warehouse_a2 | self.warehouse_b).ids),
+        )
+
+    def test_warehouse_commands_cannot_modify_warehouse_records(self):
+        # Even a native Inventory manager may not use a relation command to
+        # create, rename or delete a warehouse through this product field.
+        self.operator.sudo().write({"group_ids": [Command.link(self.env.ref("stock.group_stock_manager").id)]})
+        for model_name in ("product.template", "product.product"):
+            model = self._model(model_name)
+            product = model.browse(self._records(self.regular_a, model_name).id)
+            for command in (
+                Command.create({"name": "Forbidden nested warehouse", "code": "FNW", "company_id": self.company_a.id}),
+                Command.update(self.warehouse_a.id, {"name": "Forbidden warehouse rename"}),
+                Command.delete(self.warehouse_a.id),
+            ):
+                with self.subTest(model=model_name, command=command):
+                    with self.assertRaises(AccessError), self.cr.savepoint():
+                        product.write({"domex_warehouse_ids": [command]})
+                    with self.assertRaises(AccessError), self.cr.savepoint():
+                        model.create({"name": "Nested command", "domex_warehouse_ids": [command]})
+        self.assertEqual(self.warehouse_a.sudo().name, "Access A1")
+
+    def test_create_company_defaults_and_revocations_are_validated(self):
+        for model_name in ("product.template", "product.product"):
+            model = self._model(model_name)
+            for company_id, warehouse in (
+                (self.company_a.id, self.warehouse_b),
+                (self.company_b.id, self.warehouse_b),
+                (self.company_c.id, self.warehouse_a),
+            ):
+                with self.subTest(model=model_name, company=company_id, warehouse=warehouse.id):
+                    with self.assertRaises(AccessError), self.cr.savepoint():
+                        model.with_context(default_company_id=company_id).create({
+                            "name": "Wrong company", "domex_warehouse_ids": [Command.set(warehouse.ids)],
+                        })
+            valid = model.with_context(
+                default_company_id=self.company_a.id,
+                default_domex_warehouse_ids=self.warehouse_a.ids,
+            ).create({"name": "Permitted defaults"})
+            self.assertEqual(valid.sudo().domex_warehouse_ids, self.warehouse_a)
+        # An open form does not retain a revoked or archived permission.
+        for change in ("archived", "revoked"):
+            if change == "archived":
+                self.warehouse_a.sudo().active = False
+            else:
+                self.warehouse_a.sudo().active = True
+                self.operator.sudo().write({"domex_warehouse_ids": [Command.clear()]})
+            with self.assertRaises(AccessError), self.cr.savepoint():
+                self._model("product.template").create({
+                    "name": "Stale form", "domex_warehouse_ids": [Command.link(self.warehouse_a.id)],
+                })
+
+    def test_hidden_products_cannot_be_made_accessible_by_assignment(self):
+        for model_name in ("product.template", "product.product"):
+            for template in (self.regular_a2, self.unassigned):
+                record = self._model(model_name).browse(self._records(template, model_name).id)
+                with self.assertRaises(AccessError), self.cr.savepoint():
+                    record.write({"domex_warehouse_ids": [Command.link(self.warehouse_a.id)]})
+
+    def test_warehouse_assignment_import_respects_permissions(self):
+        model = self._model("product.template")
+        result = model.load(
+            ["name", "company_id/.id", "domex_warehouse_ids/.id"],
+            [["Imported permitted product", str(self.company_a.id), str(self.warehouse_a.id)]],
+        )
+        self.assertFalse([message for message in result["messages"] if message["type"] == "error"])
+        product = model.browse(result["ids"])
+        self.assertEqual(product.sudo().domex_warehouse_ids, self.warehouse_a)
+        result = model.load(
+            [".id", "domex_warehouse_ids/.id"], [[str(product.id), str(self.warehouse_a2.id)]],
+        )
+        self.assertTrue(any(message["type"] == "error" for message in result["messages"]))
+        self.assertEqual(product.sudo().domex_warehouse_ids, self.warehouse_a)
+
+    def test_creation_keeps_company_and_category_rules(self):
+        vinyasa = self.env["product.category"].sudo().create({"name": "Creation Vinyasa", "domex_vinyasa": True})
+        for model_name in ("product.template", "product.product"):
+            model = self._model(model_name, companies=self.company_a | self.company_b)
+            values = {
+                "name": "Creation with category rules", "company_id": self.company_a.id,
+                "categ_id": vinyasa.id, "domex_warehouse_ids": [Command.set(self.warehouse_a.ids)],
+            }
+            with self.assertRaises(AccessError), self.cr.savepoint():
+                model.create(values)
+            self.operator.sudo().write({"group_ids": [Command.link(self.env.ref(
+                "domex_product_warehouse_access.group_all_product_categories",
+            ).id)]})
+            product = model.create(values)
+            product.read(["name"])
+            self.operator.sudo().write({"group_ids": [Command.unlink(self.env.ref(
+                "domex_product_warehouse_access.group_all_product_categories",
+            ).id)]})
+            shared = model.create({
+                "name": "Shared creation", "company_id": False,
+                "domex_warehouse_ids": [Command.set((self.warehouse_a | self.warehouse_b).ids)],
+            })
+            for company in (self.company_a, self.company_b):
+                shared.with_context(allowed_company_ids=company.ids).read(["name"])
+            with self.assertRaises(AccessError), self.cr.savepoint():
+                model.with_context(allowed_company_ids=self.company_c.ids).create({
+                    "name": "Unauthorized context", "domex_warehouse_ids": [Command.link(self.warehouse_a.id)],
+                })
+
+    def test_template_company_and_warehouses_can_change_together(self):
+        product = self._model("product.template", companies=self.company_a | self.company_b).browse(self.regular_a.id)
+        product.write({"company_id": self.company_b.id, "domex_warehouse_ids": [Command.set(self.warehouse_b.ids)]})
+        self.assertEqual(product.sudo().company_id, self.company_b)
+        self.assertEqual(product.sudo().domex_warehouse_ids, self.warehouse_b)
+        product.read(["name"])
+
+    def test_assignment_does_not_grant_product_creation_permissions(self):
+        reader = new_test_user(
+            self.env(su=True), login="domex_warehouse_reader", groups="base.group_user,stock.group_stock_user",
+            company_id=self.company_a.id, company_ids=[Command.set(self.company_a.ids)],
+            domex_warehouse_ids=[Command.set(self.warehouse_a.ids)],
+        )
+        self.assertFalse(reader.has_group("product.group_product_manager"))
+        for model_name in ("product.template", "product.product"):
+            model = self._model(model_name, reader)
+            self.assertNotIn("domex_warehouse_ids", model.fields_get())
+            with self.assertRaises(AccessError), self.cr.savepoint():
+                model.create({"name": "No native creation permission", "domex_warehouse_ids": [Command.set(self.warehouse_a.ids)]})
+
+    def test_batch_create_validates_every_warehouse_assignment(self):
+        for model_name in ("product.template", "product.product"):
+            model = self._model(model_name, companies=self.company_a | self.company_b)
+            products = model.create([
+                {"name": "Batch A", "company_id": self.company_a.id, "domex_warehouse_ids": [Command.set(self.warehouse_a.ids)]},
+                {"name": "Batch B", "company_id": self.company_b.id, "domex_warehouse_ids": [Command.set(self.warehouse_b.ids)]},
+            ])
+            self.assertEqual(len(products), 2)
+            products.read(["name"])
+            with self.assertRaises(AccessError), self.cr.savepoint():
+                model.create([
+                    {"name": "Batch allowed", "domex_warehouse_ids": [Command.set(self.warehouse_a.ids)]},
+                    {"name": "Batch forbidden", "domex_warehouse_ids": [Command.set(self.warehouse_a2.ids)]},
+                ])
 
     def test_user_assignment_change_invalidates_cached_rule(self):
         self._assert_visible(self.regular_a | self.shared)
