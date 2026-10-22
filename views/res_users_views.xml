@@ -21,6 +21,8 @@
                         Solo la cuenta principal de administrador conserva acceso
                         a todos los productos de esas compañías. Los demás usuarios
                         siguen estas reglas aunque su función sea Administrador.
+                        Todas las categorías permite consultar Vinyasa y las
+                        categorías comunes conservando los demás requisitos.
                     </div>
                 </group>
             </xpath>

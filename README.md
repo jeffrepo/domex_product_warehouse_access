@@ -1,7 +1,7 @@
 # Domex: Productos por almacén
 
 Módulo independiente para Odoo 19. Nombre técnico:
-`domex_product_warehouse_access`. Versión `19.0.1.1.2`. Depende de `stock` y `sale`.
+`domex_product_warehouse_access`. Versión `19.0.1.2.0`. Depende de `stock` y `sale`.
 Incluye el control de categorías Vinyasa; no depende de `product_category_company`.
 
 ## Reglas de acceso
@@ -21,9 +21,11 @@ Un usuario puede combinar el grupo contable con varios almacenes y obtener
 ambos conjuntos de productos.
 
 El grupo **Vinyasa** selecciona un catálogo exclusivo: sus miembros ven solo
-categorías marcadas y productos de esas categorías. Los usuarios sin el grupo
+categorías marcadas y productos de esas categorías. Los usuarios sin ese grupo
 ven las categorías sin marcar y sus productos, además de productos sin
-categoría. La cuenta principal de administrador conserva ambos catálogos.
+categoría. El grupo **Todas las categorías** permite ambos catálogos y productos
+sin categoría, tenga o no el usuario el grupo Vinyasa. La cuenta principal de
+administrador conserva ambos catálogos sin requerir estos grupos.
 Las categorías no se filtran por compañía, almacenes, grupo contable ni por la
 marca de una categoría padre. Los productos conservan sus requisitos de acceso.
 
@@ -63,6 +65,11 @@ comparten los almacenes y la clasificación de su plantilla.
 6. Asignar el grupo **Vinyasa**, en **Domex: Categorías Vinyasa**, a los usuarios
    que deban trabajar exclusivamente con ese catálogo
    (`domex_product_warehouse_access.group_vinyasa`).
+7. Para quienes necesiten consultar Vinyasa y las categorías comunes, asignar
+   **Todas las categorías**, en **Domex: Todas las categorías**
+   (`domex_product_warehouse_access.group_all_product_categories`). Se puede
+   conservar su grupo Vinyasa y su grupo Producto contable. Este permiso no
+   sustituye los almacenes ni las compañías permitidas/seleccionadas.
 
 Al marcar **Producto contable** en el formulario se vacían los almacenes. La
 validación del servidor rechaza productos contables con almacenes también en
@@ -99,7 +106,7 @@ Si un usuario ve todos los productos:
 2. Comprobar que no está usando el modo superusuario; el modo desarrollador
    por sí solo no omite las reglas.
 3. Verificar en Aplicaciones que `domex_product_warehouse_access` está instalado
-   y actualizado a `19.0.1.1.2`. El push a GitHub por sí solo no instala el módulo
+   y actualizado a `19.0.1.2.0`. El push a GitHub por sí solo no instala el módulo
    ni actualiza los registros de seguridad de una base existente.
 4. En modo desarrollador, revisar en **Ajustes → Técnico → Seguridad → Reglas de
    registro** las reglas **Domex:** de productos, variantes y categorías.
@@ -116,32 +123,32 @@ un filtro visual como sustituto de las reglas de seguridad del servidor.
 
 ## Categorías compartidas y Vinyasa
 
-| Categoría | Sin grupo Vinyasa | Con grupo Vinyasa | Cuenta principal |
-| --- | --- | --- | --- |
-| Vinyasa desmarcado | Visible | Oculta | Visible |
-| Vinyasa marcado | Oculta | Visible | Visible |
+| Categoría | Sin ninguno de los dos grupos | Solo Vinyasa | Todas las categorías, con o sin Vinyasa | Cuenta principal |
+| --- | --- | --- | --- | --- |
+| Vinyasa desmarcado | Visible | Oculta | Visible | Visible |
+| Vinyasa marcado | Oculta | Visible | Visible | Visible |
 
 Se conservan las ACL nativas de categorías. El grupo Vinyasa no concede
 permisos de administración ni acceso a compañías adicionales. Los demás
-administradores de Ajustes siguen la misma separación según tengan o no el
-grupo; la excepción automática es solo para `base.user_admin`, incluso si
-esa cuenta pertenece al grupo Vinyasa.
+administradores de Ajustes siguen la misma separación según sus grupos Vinyasa
+y Todas las categorías; la excepción automática es solo para `base.user_admin`.
 
 La marca es **individual**, no se hereda. Una hija sin marcar sigue compartida
 entre compañías para usuarios sin el grupo, aunque su padre sea Vinyasa. Los
-miembros de Vinyasa no ven esa hija sin marcar. Marcar una hija no cambia el
-acceso a su padre ni a sus hermanas. Para clasificar varias categorías,
+miembros que tengan únicamente Vinyasa no ven esa hija sin marcar. Marcar una
+hija no cambia el acceso a su padre ni a sus hermanas. Para clasificar varias categorías,
 marcarlas individualmente o desde la edición en bloque de la lista. No se
 deduce la marca por el nombre de la categoría ni por una compañía llamada Vinyasa.
 
 Los productos y variantes siguen esa misma separación, también en selectores
-de facturas y lecturas por API. Un miembro de Vinyasa no ve productos de
-categorías sin marcar ni productos sin categoría; un usuario sin Vinyasa no
-ve productos de categorías marcadas. En ambos catálogos continúan aplicándose
-los requisitos de almacenes, Producto contable y compañías seleccionadas.
-Un producto contable de una categoría Vinyasa requiere ambos grupos. Los
-productos sin categoría permanecen en el catálogo de usuarios sin Vinyasa,
-sujetos a sus almacenes o al grupo Producto contable.
+de facturas y lecturas por API. Sin Todas las categorías, un miembro de Vinyasa
+no ve productos de categorías sin marcar ni productos sin categoría; un usuario
+sin Vinyasa no ve productos de categorías marcadas. En ambos catálogos continúan
+aplicándose los requisitos de almacenes, Producto contable y compañías seleccionadas.
+Un producto contable de una categoría Vinyasa requiere Producto contable y
+además Vinyasa o Todas las categorías. Los productos sin categoría son accesibles
+para usuarios sin Vinyasa o con Todas las categorías, sujetos a sus almacenes
+o al grupo Producto contable.
 
 Solo Ajustes puede editar el booleano, también por importación/API. Los demás
 usuarios no pueden quitar la protección cambiando un producto a una categoría
@@ -151,13 +158,39 @@ categorías comunes con los permisos nativos. Las categorías Vinyasa deben
 ser clasificadas por un administrador de Ajustes con acceso a ellas.
 Cambiar un padre no cambia la marca de sus hijas.
 
+### Usuarios que necesitan ambos catálogos
+
+Desde `19.0.1.2.0`, **Todas las categorías** permite acceder a las categorías
+Vinyasa y comunes sin cambiar sus marcas. Por ejemplo, un usuario con Vinyasa
+y Producto contable puede necesitar abrir una factura de proveedor de otra
+compañía que contiene un servicio contable en **Gastos de Operación**, una
+categoría sin marca Vinyasa. Asignar Todas las categorías permite leer ese
+producto y su categoría, siempre que la compañía del producto esté seleccionada
+y el usuario tenga los permisos nativos de la factura.
+
+El grupo es independiente: no añade ni retira Vinyasa, Producto contable,
+almacenes ni permisos de Ajustes. Si se retira Todas las categorías, vuelve a
+aplicarse el catálogo definido por el grupo Vinyasa que el usuario conserve.
+Los cambios de grupo invalidan las reglas sin reiniciar Odoo. Los productos
+normales siguen requiriendo un almacén coincidente y activo; los contables
+siguen requiriendo Producto contable. Las restricciones globales de otros
+módulos y las protecciones de configuración permanecen vigentes.
+
+Para actualizar desde `19.0.1.1.2`, desplegar el código y actualizar
+**domex_product_warehouse_access** a `19.0.1.2.0` en Aplicaciones. Después,
+en **Ajustes → Usuarios → Permisos de acceso**, asignar **Todas las categorías**
+a cada usuario que necesite ambos catálogos. No se asigna automáticamente a
+ningún usuario ni a todos los administradores. Volver a abrir la factura o
+el selector para descartar datos que el navegador ya tenía cargados.
+
 ### Actualizar desde `19.0.1.1.0`
 
-Actualizar **domex_product_warehouse_access** a `19.0.1.1.2` en Aplicaciones.
+Actualizar **domex_product_warehouse_access** a `19.0.1.2.0` en Aplicaciones.
 Se conservan el mismo grupo, sus usuarios y las marcas existentes. La diferencia
 es que los miembros del grupo pasan de ver ambos catálogos a ver únicamente
-Vinyasa. No es necesario quitar y volver a asignar el grupo. Volver a abrir
-las listas y selectores después de actualizar para descartar datos ya cargados.
+Vinyasa, salvo que se les asigne Todas las categorías. No es necesario quitar y
+volver a asignar Vinyasa. Volver a abrir las listas y selectores después de
+actualizar para descartar datos ya cargados.
 
 ### Retirar `product_category_company`
 
@@ -165,7 +198,7 @@ Si ese módulo sigue instalado, sus reglas y validaciones también se aplican;
 este módulo no las modifica ni las desactiva automáticamente. Para usar
 exclusivamente el control solicitado:
 
-1. Actualizar **domex_product_warehouse_access** a `19.0.1.1.2` en la base de
+1. Actualizar **domex_product_warehouse_access** a `19.0.1.2.0` en la base de
    pruebas. No basta con descargar el código o reiniciar.
 2. Si ya se configuraron categorías con la primera implementación de Vinyasa
    en `product_category_company`, mantener ese módulo disponible durante esta
@@ -256,8 +289,8 @@ exclusión de servicios. El cambio no concede acceso a las fichas ni a los
 selectores de los productos restringidos. Abrir una venta y leer sus líneas
 puede seguir requiriendo acceso a esos productos.
 
-Actualizar el módulo en Aplicaciones a `19.0.1.1.2` después de desplegar el
-código. Esta versión añade la dependencia explícita de Ventas (`sale`) para
+Actualizar el módulo en Aplicaciones después de desplegar el código.
+Desde `19.0.1.1.2` se incluye la dependencia explícita de Ventas (`sale`) para
 extender su campo. No cambia asignaciones, compañías ni grupos existentes.
 
 ## Instalación y catálogo existente
@@ -301,6 +334,12 @@ permisos por grupo, cambios de clasificación, búsquedas y lectura directa de
 productos/variantes, selectores de facturas, importaciones protegidas,
 valores predeterminados, expansión de grupos y conservación de la protección
 al editar o eliminar. Ejecutarla sin `product_category_company` instalado.
+
+También cubre Todas las categorías con y sin Vinyasa, concesión y revocación
+sin perder la asignación previa, lectura del servicio contable y su categoría
+común, productos sin categoría, requisitos contables y de almacenes,
+compañías seleccionadas/permitidas, reglas globales adicionales y protección
+contra cambios de clasificación o escaladas de permisos.
 
 La suite de Ventas reproduce el fallo de `web_search_read` al calcular la fecha
 con productos restringidos y comprueba el acceso posterior al catálogo, las

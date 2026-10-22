@@ -8,6 +8,7 @@ from odoo.tests.common import new_test_user
 
 VINYASA_GROUP = "domex_product_warehouse_access.group_vinyasa"
 ACCOUNTING_GROUP = "domex_product_warehouse_access.group_accounting_product"
+ALL_CATEGORIES_GROUP = "domex_product_warehouse_access.group_all_product_categories"
 
 
 @tagged("post_install", "-at_install")
@@ -343,3 +344,126 @@ class TestVinyasaCategories(TransactionCase):
         self._assert_products(self.restricted_product, self.member)
         self.member.sudo().write({"group_ids": [Command.unlink(self.env.ref(VINYASA_GROUP).id)]})
         self._assert_products(self.common_product | self.uncategorized, self.member)
+
+    def test_all_categories_grant_and_revoke_preserve_previous_catalog(self):
+        group = self.env.ref(ALL_CATEGORIES_GROUP)
+        for user, original_categories, original_products in (
+            (self.user, self.shared_categories, self.shared_products),
+            (self.member, self.vinyasa, self.restricted_product),
+            (self.settings, self.shared_categories, self.shared_products),
+        ):
+            with self.subTest(user=user.login):
+                had_vinyasa = user.has_group(VINYASA_GROUP)
+                # Warm both rule caches before changing membership.
+                self._assert_categories(original_categories, user)
+                self._assert_products(original_products, user)
+                user.sudo().write({"group_ids": [Command.link(group.id)]})
+                self._assert_categories(self.categories, user)
+                self._assert_products(self.products - self.company_b_product, user)
+                self.assertEqual(user.has_group(VINYASA_GROUP), had_vinyasa)
+                user.sudo().write({"group_ids": [Command.unlink(group.id)]})
+                self._assert_categories(original_categories, user)
+                self._assert_products(original_products, user)
+                self.assertEqual(user.has_group(VINYASA_GROUP), had_vinyasa)
+
+    def test_all_categories_reads_common_accounting_service_with_vinyasa_group(self):
+        # Regression: a Vinyasa member with accounting access cannot read a
+        # supplier-bill service whose category is shared. No warehouse is needed.
+        accounting = self.common_product | self.restricted_product | self.uncategorized
+        accounting.sudo().write({
+            "company_id": self.company_a.id,
+            "domex_accounting_product": True,
+            "domex_warehouse_ids": [Command.clear()],
+        })
+        self.member.sudo().write({
+            "group_ids": [Command.link(self.env.ref(ACCOUNTING_GROUP).id)],
+            "domex_warehouse_ids": [Command.clear()],
+        })
+        self._assert_products(self.restricted_product, self.member)
+        self.env.invalidate_all()
+        for name, rid in (
+            ("product.template", self.common_product.id),
+            ("product.product", self.common_product.product_variant_id.id),
+            ("product.category", self.common_product.categ_id.id),
+        ):
+            with self.subTest(model=name), self.assertRaises(AccessError):
+                self._model(name, self.member).browse(rid).read(["name"])
+
+        self.member.sudo().write({
+            "group_ids": [Command.link(self.env.ref(ALL_CATEGORIES_GROUP).id)],
+        })
+        self.env.invalidate_all()
+        self._assert_categories(self.categories, self.member)
+        self._assert_products(accounting, self.member)
+        for name in ("product.template", "product.product"):
+            records = accounting if name == "product.template" else accounting.product_variant_ids
+            values = self._model(name, self.member).browse(records.ids).web_read({
+                "display_name": {}, "categ_id": {"fields": {"display_name": {}}},
+            })
+            self.assertEqual({row["id"] for row in values}, set(records.ids))
+        self.assertTrue(self.member.has_group(VINYASA_GROUP))
+        self.assertFalse(self.member.domex_warehouse_ids)
+
+        # Revoking accounting access must still hide these services, even while
+        # both category groups remain assigned and their domains are cached.
+        self.member.sudo().write({"group_ids": [Command.unlink(self.env.ref(ACCOUNTING_GROUP).id)]})
+        self._assert_products(self.products.browse(), self.member)
+        with self.assertRaises(AccessError):
+            self._model("product.product", self.member).browse(
+                self.common_product.product_variant_id.id,
+            ).read(["name"])
+
+    def test_all_categories_keeps_selected_and_allowed_company_limits(self):
+        for user in (self.member, self.member_a):
+            user.sudo().write({"group_ids": [Command.link(self.env.ref(ALL_CATEGORIES_GROUP).id)]})
+            self._assert_categories(self.categories, user)
+            self._assert_products(self.products - self.company_b_product, user)
+            with self.assertRaises(AccessError):
+                self._model("product.template", user).browse(self.company_b_product.id).read(["name"])
+        self._assert_products(self.products, self.member, self.companies)
+        self.assertEqual(self.member_a.company_ids, self.company_a)
+        for name in ("product.template", "product.product"):
+            with self.subTest(model=name), self.assertRaises(AccessError):
+                self._model(name, self.member_a, self.company_b).search([])
+
+    def test_all_categories_still_requires_an_applicable_warehouse(self):
+        self.member.sudo().write({
+            "group_ids": [Command.link(self.env.ref(ALL_CATEGORIES_GROUP).id)],
+            "domex_warehouse_ids": [Command.clear()],
+        })
+        self._assert_categories(self.categories, self.member)
+        self._assert_products(self.products.browse(), self.member)
+        self.member.sudo().write({"domex_warehouse_ids": [Command.set(self.warehouse_b.ids)]})
+        self._assert_products(self.products.browse(), self.member)
+        self._assert_products(self.company_b_product, self.member, self.companies)
+        self.member.sudo().write({"domex_warehouse_ids": [Command.set(self.warehouse_a.ids)]})
+        self._assert_products(self.products - self.company_b_product, self.member, self.companies)
+
+    def test_all_categories_does_not_grant_configuration_permissions(self):
+        self.member.sudo().write({"group_ids": [Command.link(self.env.ref(ALL_CATEGORIES_GROUP).id)]})
+        self.assertFalse(self.member.has_group("base.group_system"))
+        self.assertFalse(self.member.has_group(ACCOUNTING_GROUP))
+        self._assert_categories(self.categories, self.member)
+        with self.assertRaises(AccessError), self.cr.savepoint():
+            self._model("product.category", self.member).browse(self.vinyasa.id).write({"domex_vinyasa": False})
+        with self.assertRaises(AccessError), self.cr.savepoint():
+            self._model("product.template", self.member).browse(self.restricted_product.id).write({
+                "categ_id": self.common_a.id,
+            })
+        with self.assertRaises(AccessError), self.cr.savepoint():
+            self._model("product.category", self.member).browse(self.vinyasa.id).unlink()
+        with self.assertRaises(AccessError), self.cr.savepoint():
+            self._model("res.users", self.member).browse(self.member.id).write({
+                "group_ids": [Command.link(self.env.ref("base.group_system").id)],
+            })
+
+    def test_all_categories_preserves_other_global_rules(self):
+        self.member.sudo().write({"group_ids": [Command.link(self.env.ref(ALL_CATEGORIES_GROUP).id)]})
+        self.env["ir.rule"].sudo().create({
+            "name": "Additional category restriction",
+            "model_id": self.env["ir.model"]._get_id("product.category"),
+            "domain_force": "[('id', '!=', %s)]" % self.common_a.id,
+        })
+        self._assert_categories(self.categories - self.common_a, self.member)
+        with self.assertRaises(AccessError):
+            self._model("product.category", self.member).browse(self.common_a.id).read(["name"])

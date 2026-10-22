@@ -77,7 +77,9 @@ class ResUsers(models.Model):
     def _domex_category_access_domain(self):
         self.ensure_one()
         administrator = self.env.ref("base.user_admin", raise_if_not_found=False)
-        if administrator and self.id == administrator.id:
+        if (administrator and self.id == administrator.id) or self.has_group(
+            "domex_product_warehouse_access.group_all_product_categories"
+        ):
             return Domain.TRUE
         # Membership selects one category set, not an additional permission.
         # Company and ancestor flags do not change the category's own flag.
@@ -87,6 +89,10 @@ class ResUsers(models.Model):
 
     def _domex_product_category_domain(self):
         # The principal administrator already bypasses this filter above.
+        if self.has_group("domex_product_warehouse_access.group_all_product_categories"):
+            # Bypass only category classification, including uncategorized
+            # products. Company, warehouse and accounting checks remain outside.
+            return Domain.TRUE
         # any! checks the flag without requiring category configuration rights.
         domain = Domain(
             "categ_id", "any!", self._domex_category_access_domain(),
