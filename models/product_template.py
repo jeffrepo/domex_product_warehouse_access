@@ -27,6 +27,33 @@ class ProductTemplate(models.Model):
     def _domex_can_configure_all_warehouses(self):
         return self.env.su or self.env.user.has_group("base.group_system")
 
+    def copy_data(self, default=None):
+        self.check_access("read")
+        can_classify = self._domex_can_configure_all_warehouses()
+        if not can_classify and any(self.sudo().mapped("domex_accounting_product")):
+            # Skipping the protected field must not silently turn an accounting
+            # product into an ordinary product when it is duplicated.
+            raise AccessError(self.env._(
+                "Solo un administrador de Ajustes puede duplicar productos contables."
+            ))
+
+        values_list = super().copy_data(default)
+        for product, values in zip(self, values_list):
+            if values is None:
+                continue
+            if can_classify:
+                if "domex_accounting_product" not in (default or {}):
+                    values["domex_accounting_product"] = product.domex_accounting_product
+            elif "domex_warehouse_ids" not in (default or {}):
+                # A duplicate is a NEW assignment. Do not copy warehouses the
+                # creator cannot assign, even if they can read the source.
+                # Explicit overrides still go through normal create validation.
+                allowed = product._domex_available_warehouses(values.get("company_id", False))
+                values["domex_warehouse_ids"] = [fields.Command.set(
+                    (product.domex_warehouse_ids & allowed).ids,
+                )]
+        return values_list
+
     @api.model
     def _domex_available_warehouses(self, company_id=False):
         # Validate the selected companies before reading the protected user
@@ -149,6 +176,7 @@ class ProductTemplate(models.Model):
     domex_accounting_product = fields.Boolean(
         string="Producto contable",
         groups="base.group_system",
+        copy=False,
         help="Los miembros del grupo Producto contable y la cuenta principal "
              "de administrador pueden acceder a este producto, dentro de sus "
              "compañías seleccionadas. "

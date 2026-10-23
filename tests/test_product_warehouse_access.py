@@ -454,6 +454,133 @@ class TestProductWarehouseAccess(TransactionCase):
                     {"name": "Batch forbidden", "domex_warehouse_ids": [Command.set(self.warehouse_a2.ids)]},
                 ])
 
+    def test_regular_creators_can_duplicate_templates_and_variants(self):
+        # Reproduce the RPC product.template.copy as Rudy, with and without
+        # accounting access. Neither user may read the protected boolean.
+        self.dual_user.sudo().write({"group_ids": [Command.link(self.env.ref(
+            "domex_product_warehouse_access.group_all_product_categories",
+        ).id)]})
+        category = self.env["product.category"].sudo().create({"name": "Copy category"})
+        self.regular_a.sudo().write({"categ_id": category.id, "list_price": 123.45})
+        for user in (self.operator, self.dual_user):
+            for model_name in ("product.template", "product.product"):
+                with self.subTest(user=user.login, model=model_name):
+                    source = self._model(model_name, user).browse(self._records(self.regular_a, model_name).id)
+                    with self.assertRaises(AccessError):
+                        source.read(["domex_accounting_product"])
+                    duplicate = source.copy()
+                    self.assertNotEqual(duplicate.id, source.id)
+                    self.assertEqual(duplicate.create_uid, user)
+                    self.assertEqual(duplicate.company_id, self.company_a)
+                    self.assertEqual(duplicate.categ_id, category)
+                    self.assertEqual(duplicate.list_price, 123.45)
+                    self.assertEqual(duplicate.domex_warehouse_ids, self.warehouse_a)
+                    self.assertFalse(duplicate.sudo().domex_accounting_product)
+                    duplicate.read(["name"])
+                    with self.assertRaises(AccessError):
+                        duplicate.read(["domex_accounting_product"])
+
+    def test_duplicate_uses_only_source_warehouses_the_creator_can_assign(self):
+        archived = self.env["stock.warehouse"].sudo().create({
+            "name": "Archived copy warehouse", "code": "DCAR", "company_id": self.company_a.id,
+        })
+        self.operator.sudo().write({"domex_warehouse_ids": [Command.link(archived.id)]})
+        source_warehouses = self.warehouse_a | self.warehouse_a2 | self.warehouse_b | archived
+        self.shared.sudo().write({"domex_warehouse_ids": [Command.set(source_warehouses.ids)]})
+        archived.active = False
+        for model_name in ("product.template", "product.product"):
+            for companies, expected in (
+                (self.company_a, self.warehouse_a),
+                (self.company_a | self.company_b, self.warehouse_a | self.warehouse_b),
+            ):
+                with self.subTest(model=model_name, companies=companies.ids):
+                    source = self._model(model_name, companies=companies).browse(self._records(self.shared, model_name).id)
+                    duplicate = source.copy()
+                    self.assertFalse(duplicate.company_id)
+                    self.assertEqual(set(duplicate.sudo().domex_warehouse_ids.ids), set(expected.ids))
+                    self.assertEqual(set(self.shared.sudo().domex_warehouse_ids.ids), set(source_warehouses.ids))
+
+    def test_accounting_copies_keep_classification_or_require_settings(self):
+        for model_name in ("product.template", "product.product"):
+            source_id = self._records(self.accounting_a, model_name).id
+            source = self._model(model_name, self.dual_user).browse(source_id)
+            for default in (None, {
+                "domex_accounting_product": False,
+                "domex_warehouse_ids": [Command.set(self.warehouse_a.ids)],
+            }):
+                with self.assertRaisesRegex(AccessError, "duplicar productos contables"), self.cr.savepoint():
+                    source.copy(default)
+            for user in (self.accounting_admin, self.primary_admin):
+                duplicate = self._model(model_name, user).browse(source_id).copy()
+                self.assertTrue(duplicate.domex_accounting_product)
+                self.assertFalse(duplicate.domex_warehouse_ids)
+                self.assertEqual(duplicate.company_id, self.company_a)
+                duplicate.read(["name"])
+
+    def test_copy_defaults_do_not_bypass_protected_fields_or_warehouses(self):
+        for model_name in ("product.template", "product.product"):
+            source = self._model(model_name).browse(self._records(self.regular_a, model_name).id)
+            for default in (
+                {"domex_accounting_product": True},
+                {"domex_accounting_product": False},
+                {"domex_warehouse_ids": [Command.set(self.warehouse_a2.ids)]},
+                {"domex_warehouse_ids": [Command.link(self.warehouse_b.id)]},
+            ):
+                with self.subTest(model=model_name, default=default):
+                    with self.assertRaises(AccessError), self.cr.savepoint():
+                        source.copy(default)
+            with self.assertRaises(AccessError), self.cr.savepoint():
+                source.with_context(default_domex_accounting_product=True).copy()
+            with self.assertRaises(ValidationError), self.cr.savepoint():
+                source.copy({"domex_warehouse_ids": [Command.clear()]})
+            duplicate = source.copy({"name": "Explicit permitted copy", "domex_warehouse_ids": [Command.set(self.warehouse_a.ids)]})
+            self.assertEqual(duplicate.name, "Explicit permitted copy")
+            self.assertEqual(duplicate.domex_warehouse_ids, self.warehouse_a)
+
+    def test_copy_cannot_read_an_inaccessible_source(self):
+        for model_name in ("product.template", "product.product"):
+            for template in (self.regular_a2, self.regular_b, self.unassigned, self.accounting_a):
+                source = self._model(model_name).browse(self._records(template, model_name).id)
+                with self.subTest(model=model_name, template=template.id):
+                    with self.assertRaises(AccessError), self.cr.savepoint():
+                        source.copy({
+                            "company_id": self.company_a.id,
+                            "domex_warehouse_ids": [Command.set(self.warehouse_a.ids)],
+                        })
+
+    def test_copy_to_other_company_requires_compatible_warehouse_override(self):
+        source = self._model("product.template", companies=self.company_a | self.company_b).browse(self.regular_a.id)
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            source.copy({"company_id": self.company_b.id})
+        duplicate = source.copy({
+            "company_id": self.company_b.id,
+            "domex_warehouse_ids": [Command.set(self.warehouse_b.ids)],
+        })
+        self.assertEqual(duplicate.company_id, self.company_b)
+        self.assertEqual(duplicate.domex_warehouse_ids, self.warehouse_b)
+        self.assertEqual(source.company_id, self.company_a)
+        self.assertEqual(source.domex_warehouse_ids, self.warehouse_a)
+
+    def test_copy_data_does_not_read_protected_flag_and_handles_batches(self):
+        source = self._model("product.template").browse((self.regular_a | self.shared).ids)
+        values_list = source.copy_data()
+        self.assertEqual(len(values_list), 2)
+        for values in values_list:
+            self.assertNotIn("domex_accounting_product", values)
+            self.assertEqual(values["domex_warehouse_ids"], [Command.set(self.warehouse_a.ids)])
+        duplicates = source.copy()
+        self.assertEqual(len(duplicates), 2)
+        duplicates.read(["name"])
+
+    def test_settings_copy_preserves_warehouses_and_explicit_classification(self):
+        source = self._model("product.template", self.primary_admin, self.company_a | self.company_b).browse(self.shared.id)
+        duplicate = source.copy()
+        self.assertEqual(set(duplicate.domex_warehouse_ids.ids), set(source.domex_warehouse_ids.ids))
+        self.assertFalse(duplicate.domex_accounting_product)
+        accounting = source.copy({"domex_accounting_product": True, "domex_warehouse_ids": [Command.clear()]})
+        self.assertTrue(accounting.domex_accounting_product)
+        self.assertFalse(accounting.domex_warehouse_ids)
+
     def test_user_assignment_change_invalidates_cached_rule(self):
         self._assert_visible(self.regular_a | self.shared)
         self.operator.sudo().write({"domex_warehouse_ids": [Command.set(self.warehouse_a2.ids)]})

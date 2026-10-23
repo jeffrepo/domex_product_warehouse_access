@@ -1,7 +1,7 @@
 # Domex: Productos por almacén
 
 Módulo independiente para Odoo 19. Nombre técnico:
-`domex_product_warehouse_access`. Versión `19.0.1.2.1`. Depende de `stock` y `sale`.
+`domex_product_warehouse_access`. Versión `19.0.1.2.2`. Depende de `stock` y `sale`.
 Incluye el control de categorías Vinyasa; no depende de `product_category_company`.
 
 ## Reglas de acceso
@@ -120,7 +120,7 @@ en contables. Esa clasificación sigue reservada a Ajustes y los productos
 contables continúan sin almacenes. La cuenta principal de administrador puede
 seguir preparando productos normales sin asignaciones.
 
-Actualizar **domex_product_warehouse_access** a `19.0.1.2.1` en Aplicaciones
+Actualizar **domex_product_warehouse_access** a `19.0.1.2.2` en Aplicaciones
 después de desplegar el código. Se utiliza el permiso nativo de creación;
 no hay que asignar un grupo nuevo. La actualización no modifica almacenes,
 compañías, categorías ni permisos existentes.
@@ -133,6 +133,27 @@ tengan la función **Administrador** (`base.group_system`) o sean responsables d
 Inventario o Contabilidad. Las asignaciones de grupos existentes se conservan
 al actualizar. Los permisos de Ajustes permiten administrar la configuración
 de seguridad; esta restricción de catálogo no retira esos permisos.
+
+### Duplicar productos
+
+Desde `19.0.1.2.2`, los usuarios con Creación de productos pueden duplicar
+productos normales sin necesitar acceso al campo protegido **Producto contable**.
+La copia mantiene la compañía y la categoría del original. Conserva únicamente
+los almacenes del original que el usuario pueda asignar: permitidos, activos,
+de compañías seleccionadas y compatibles con la compañía de la copia. El
+producto original conserva todas sus asignaciones.
+
+El botón Duplicar de las variantes utiliza el mismo flujo de la plantilla.
+Se siguen comprobando el acceso al original y los permisos de creación; los
+valores explícitos enviados por API también deben cumplir las validaciones.
+La copia necesita al menos un almacén válido y no concede acceso a productos
+o compañías restringidos.
+
+Duplicar productos contables sigue requiriendo Ajustes. Para esos usuarios,
+la copia conserva la marca contable; no se convierte en un producto normal.
+La marca continúa protegida para los demás usuarios, incluso si pertenecen
+al grupo Producto contable. No se elevan los permisos para copiar o crear
+el producto completo. Actualizar el módulo en Aplicaciones tras desplegar.
 
 ## Cuándo se aplican las reglas
 
@@ -150,7 +171,7 @@ Si un usuario ve todos los productos:
 2. Comprobar que no está usando el modo superusuario; el modo desarrollador
    por sí solo no omite las reglas.
 3. Verificar en Aplicaciones que `domex_product_warehouse_access` está instalado
-   y actualizado a `19.0.1.2.1`. El push a GitHub por sí solo no instala el módulo
+   y actualizado a `19.0.1.2.2`. El push a GitHub por sí solo no instala el módulo
    ni actualiza los registros de seguridad de una base existente.
 4. En modo desarrollador, revisar en **Ajustes → Técnico → Seguridad → Reglas de
    registro** las reglas **Domex:** de productos, variantes y categorías.
@@ -221,7 +242,7 @@ siguen requiriendo Producto contable. Las restricciones globales de otros
 módulos y las protecciones de configuración permanecen vigentes.
 
 Para actualizar desde `19.0.1.1.2`, desplegar el código y actualizar
-**domex_product_warehouse_access** a `19.0.1.2.1` en Aplicaciones. Después,
+**domex_product_warehouse_access** a `19.0.1.2.2` en Aplicaciones. Después,
 en **Ajustes → Usuarios → Permisos de acceso**, asignar **Todas las categorías**
 a cada usuario que necesite ambos catálogos. No se asigna automáticamente a
 ningún usuario ni a todos los administradores. Volver a abrir la factura o
@@ -229,7 +250,7 @@ el selector para descartar datos que el navegador ya tenía cargados.
 
 ### Actualizar desde `19.0.1.1.0`
 
-Actualizar **domex_product_warehouse_access** a `19.0.1.2.1` en Aplicaciones.
+Actualizar **domex_product_warehouse_access** a `19.0.1.2.2` en Aplicaciones.
 Se conservan el mismo grupo, sus usuarios y las marcas existentes. La diferencia
 es que los miembros del grupo pasan de ver ambos catálogos a ver únicamente
 Vinyasa, salvo que se les asigne Todas las categorías. No es necesario quitar y
@@ -242,7 +263,7 @@ Si ese módulo sigue instalado, sus reglas y validaciones también se aplican;
 este módulo no las modifica ni las desactiva automáticamente. Para usar
 exclusivamente el control solicitado:
 
-1. Actualizar **domex_product_warehouse_access** a `19.0.1.2.1` en la base de
+1. Actualizar **domex_product_warehouse_access** a `19.0.1.2.2` en la base de
    pruebas. No basta con descargar el código o reiniciar.
 2. Si ya se configuraron categorías con la primera implementación de Vinyasa
    en `product_category_company`, mantener ese módulo disponible durante esta
@@ -370,6 +391,9 @@ permisos por API, cambios de grupo/asignación, almacenes archivados y formulari
 Se cubren también la creación desde ambos formularios con y sin categoría,
 asignaciones permitidas en creación y edición, importación, valores por contexto,
 revocaciones, comandos relacionales y conservación de almacenes de otras compañías.
+La duplicación se prueba en plantillas y variantes, con y sin acceso contable,
+almacenes compartidos/ajenos/archivados, cambio de compañía, copias por lotes,
+campos protegidos y conservación de la clasificación para Ajustes.
 También se cubren la excepción exclusiva de la cuenta principal y la prevención
 de recargas repetidas en errores de acceso con una compañía ya seleccionada.
 Para la administración de usuarios se incluye una prueba de lectura del
